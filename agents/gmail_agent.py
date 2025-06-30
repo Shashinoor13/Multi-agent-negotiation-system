@@ -136,7 +136,7 @@ Could you please let me know your availability for next week? I'm flexible betwe
 Looking forward to hearing from you.
 
 Best regards,
-[Your Name]"""
+Shashinoor Ghimire"""
         
         elif "follow" in request_type.lower():
             subject = "Follow-up: Project Discussion"
@@ -152,7 +152,7 @@ Here's a summary of what we discussed:
 Please let me know if you have any questions or if there's anything else you'd like to discuss.
 
 Best regards,
-[Your Name]"""
+Shashinoor Ghimire"""
         
         elif "confirmation" in request_type.lower():
             subject = "Meeting Confirmation"
@@ -169,7 +169,7 @@ Meeting Details:
 Please let me know if you need to reschedule or if you have any questions.
 
 Best regards,
-[Your Name]"""
+Shashinoor Ghimire"""
         
         elif "response" in request_type.lower() or "process" in request_type.lower():
             # Simulate processing a response from someone
@@ -186,7 +186,7 @@ Based on your response, I have:
 The meeting has been successfully scheduled and all parties have been notified.
 
 Best regards,
-[Your Name]"""
+Shashinoor Ghimire"""
         
         elif "receive" in request_type.lower():
             # Simulate receiving and acknowledging a message
@@ -200,7 +200,7 @@ I will review the proposed times and get back to you shortly with my availabilit
 Thank you for reaching out.
 
 Best regards,
-[Your Name]"""
+Shashinoor Ghimire"""
         
         else:
             subject = "Important Update"
@@ -213,7 +213,7 @@ I hope you're doing well. I wanted to share an important update with you.
 Please let me know if you have any questions or need any clarification.
 
 Best regards,
-[Your Name]"""
+Shashinoor Ghimire"""
         
         return {
             "status": "completed",
@@ -246,6 +246,12 @@ class GmailAgent(Agent):
             "If recipient is missing, indicate that recipient information is required. "
             "For processing tasks (receive, process, handle, manage), use demo data to simulate the activity. "
             "For negotiation tasks, focus on professional communication, meeting coordination, and follow-up emails."
+            "Reply as a professional email assistant, ensuring all communication is clear and concise. "
+            "Use the provided tools to send emails and generate demo data when necessary."
+            "Always ensure the recipient's email address is valid and formatted correctly. "
+            "If the user input is incomplete, auto-generate appropriate content for subject and body, "
+            "but do not generate or guess the recipient's email address. "
+            "use SHASHINOOR GHIMIRE as your name in the email body and signature. "
         )
         
         FORMAT_INSTRUCTION = (

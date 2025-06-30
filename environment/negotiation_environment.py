@@ -26,7 +26,6 @@ class NegotiationEnvironment:
         from services.llm_service import LLMService
 
         yield f"\n🎯 Original Task: {task}"
-        yield "=" * 80
         
         llm = LLMService()
         raw_llm_response=llm.split_task(task=task)
@@ -34,15 +33,19 @@ class NegotiationEnvironment:
         parsed_result = llm.parse_output(raw_llm_response)
         
         if parsed_result["status"] == "success":
-            tasks = parsed_result["tasks"] 
-            yield "✅ Tasks successfully split and parsed"
-            yield f"📊 Total subtasks created: {len(tasks)}"
-            yield "-" * 60
-            
+            tasks = parsed_result["tasks"]
+            # Collect all lines in a list
+            lines = [
+                f"✅ Tasks successfully split and parsed",
+                f"📊 Total subtasks created: {len(tasks)}",
+                ""
+            ]
             for task_item in tasks:
-                yield f"📋 Subtask {task_item['id']}: {task_item['subtask']}"
-                self.tasks.append(Task(task_item['id'],task_item['subtask']))
-            yield "-" * 60
+                lines.append(f"📋 Subtask {task_item['id']}: {task_item['subtask']}")
+                self.tasks.append(Task(task_item['id'], task_item['subtask']))
+            # Join with double newlines for extra space between lines
+            yield "\n\n".join(lines)
+            
         else:
             yield f"❌ Error splitting or parsing task: {parsed_result['message']}"
             yield f"Raw response: {parsed_result.get('raw_response', 'N/A')}"
@@ -50,7 +53,6 @@ class NegotiationEnvironment:
     def distribute_task(self):
         """Distribute tasks to agents with improved initial assignment logic"""
         yield "🔄 Phase 0: Initial Task Distribution with Cross-Evaluation"
-        yield "-" * 60
         
         # First, let's evaluate all possible task-agent combinations
         all_evaluations = {}
@@ -58,25 +60,30 @@ class NegotiationEnvironment:
         yield "🔍 Evaluating all possible task-agent combinations..."
         for task in self.tasks:
             all_evaluations[task.id] = {}
+            lines = [f"📝 Task {task.id} evaluations:"]
             for agent in self.agents:
                 evaluation = agent.evaluate(task.task)
                 all_evaluations[task.id][agent.id] = evaluation
-                yield f"   Task {task.id} + Agent {agent.id}: confidence {evaluation.get('confidence', 'N/A')}"
+                lines.append(f"   • Agent {agent.id}: confidence {evaluation.get('confidence', 'N/A')}")
+            yield "\n\n".join(lines)
         
         # Find optimal assignments using greedy approach
         yield "\n🎯 Finding optimal initial assignments..."
         optimal_assignments = []
         used_agents = set()
-        
+
         # Sort tasks by complexity (lower confidence = more complex)
         task_complexity = []
         for task_id, evaluations in all_evaluations.items():
             avg_confidence = sum(eval.get('confidence', 0.5) for eval in evaluations.values()) / len(evaluations)
             task_complexity.append((task_id, avg_confidence))
-        
+
         # Sort by complexity (most complex first)
         task_complexity.sort(key=lambda x: x[1])  # Lower confidence = more complex
-        
+
+        # Collect assignment lines for grouped output
+        assignment_lines = ["✅ Optimal Assignments Generated", f"📊 Total tasks assigned: {len(task_complexity)}", ""]
+
         for task_id, _ in task_complexity:
             task = next(t for t in self.tasks if t.id == task_id)
             evaluations = all_evaluations[task_id]
@@ -99,18 +106,20 @@ class NegotiationEnvironment:
                     'confidence': best_confidence
                 })
                 used_agents.add(best_agent.id)
-                yield f"   ✅ Task {task_id} → Agent {best_agent.id} (confidence: {best_confidence:.2f})"
+                assignment_lines.append(f"📋 Task {task_id}: Assigned to Agent {best_agent.id} (confidence: {best_confidence:.2f})")
             else:
                 # If no optimal agent available, use LLM-based assignment
-                yield f"   ⚠️  No optimal agent available for Task {task_id}, using LLM assignment"
                 from services.llm_service import LLMService
                 llm = LLMService()
                 parsed_result = llm.select_agents_according_to_task(agents=self.agents, tasks=[task])
                 if parsed_result["status"] == "success" and parsed_result["assignments"]:
                     assignment = parsed_result["assignments"][0]
                     optimal_assignments.append(assignment)
-                    yield f"   ✅ Task {task_id} → Agent {assignment['assigned_to']} (LLM assigned)"
-        
+                    assignment_lines.append(f"⚠️ Task {task_id}: No optimal agent available, assigned by LLM to Agent {assignment['assigned_to']}")
+
+        # Finally, yield all grouped lines together
+        yield "\n\n".join(assignment_lines)
+
         # Create task assignments
         yield "\n📋 Creating task assignments..."
         for assignment_info in optimal_assignments:
@@ -128,14 +137,14 @@ class NegotiationEnvironment:
                 # Show assignment details
                 task_content = task.task
                 confidence = assignment_info.get('confidence', 'N/A')
-                yield f"📋 Task {task_id} → {agent_id}"
-                yield f"   Content: {task_content}"
-                yield f"   Confidence: {confidence}"
-                yield f"   ✅ Assignment created successfully"
+                yield f"""📋 Task {task_id} → {agent_id} \n
+                Content: {task_content} \n
+                Confidence: {confidence} \n
+                ✅ Assignment created successfully"""
             else:
                 yield f"   ❌ Failed to create assignment for Task {task_id} → Agent {agent_id}"
         
-        yield "-" * 60
+
         yield f"✅ Initial distribution complete: {len(self.taskAssignments)} assignments created"
 
 
@@ -463,3 +472,5 @@ class NegotiationEnvironment:
             'optimizations_applied': len(accepted_changes) if 'accepted_changes' in locals() else 0,
             'results': results
         }
+
+
