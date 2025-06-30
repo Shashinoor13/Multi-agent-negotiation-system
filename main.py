@@ -10,7 +10,7 @@ from strategy.simple import SimpleNegotiationStrategy
 
 if __name__ == "__main__":
 
-    task = "Plan a meeting with Jhon next week,his email is jhon@example.com"
+    task = "Plan a meeting with Jhon next week,his email is ristashrestha10@gmail.com"
 
     # Avaliable agents
     gmail_agent = GmailAgent("gmail_agent_01")

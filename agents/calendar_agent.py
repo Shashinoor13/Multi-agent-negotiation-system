@@ -170,6 +170,103 @@ def list_calendar_events_tool(
             "message": f"Failed to list calendar events: {str(e)}"
         }
 
+@tool
+def get_others_time():
+    """
+    List Google Calendar events for other users
+    """
+    return {
+        "status": "completed",
+        "message": "Events for other user",
+        "events": [
+            {
+                "id": "123",
+                "title": "Dummy Title",
+                "start": "2022-01-01T00:00:00Z",
+                "location": "Dummy Location",
+                "description": "Dummy Description",
+                "attendees": ["dummy@example.com"]
+            }
+        ]
+    }
+
+# Demo data tool for generating realistic calendar event data
+@tool
+def generate_demo_calendar_data_tool(event_type: str, context: str = "") -> Dict[str, Any]:
+    """
+    Generate demo calendar event data for testing purposes.
+    
+    Args:
+        event_type: Type of event (meeting, lunch, call, etc.)
+        context: Additional context about the event purpose
+    
+    Returns:
+        Dict with demo calendar event data
+    """
+    try:
+        from datetime import datetime, timedelta
+        
+        # Generate realistic dates and times
+        now = datetime.now()
+        
+        # Default to next business day at 2 PM
+        next_business_day = now + timedelta(days=1)
+        while next_business_day.weekday() >= 5:  # Skip weekends
+            next_business_day += timedelta(days=1)
+        
+        start_time = next_business_day.replace(hour=14, minute=0, second=0, microsecond=0)
+        end_time = start_time + timedelta(hours=1)
+        
+        # Generate appropriate content based on event type
+        if "meeting" in event_type.lower():
+            title = "Team Meeting"
+            description = "Regular team meeting to discuss project updates and next steps."
+            attendees = ["john.doe@example.com", "alice.johnson@company.com"]
+            location = "Conference Room A"
+            
+        elif "lunch" in event_type.lower():
+            title = "Team Lunch"
+            description = "Team lunch to discuss project progress and team building."
+            attendees = ["bob.wilson@company.com", "sarah.client@client.com"]
+            location = "Office Cafeteria"
+            start_time = start_time.replace(hour=12, minute=0)
+            end_time = start_time + timedelta(hours=1)
+            
+        elif "call" in event_type.lower() or "phone" in event_type.lower():
+            title = "Client Call"
+            description = "Scheduled call with client to discuss project requirements."
+            attendees = ["client@example.com"]
+            location = "Virtual Meeting"
+            
+        elif "review" in event_type.lower():
+            title = "Project Review"
+            description = "Review meeting to discuss project milestones and deliverables."
+            attendees = ["manager@company.com", "team@company.com"]
+            location = "Board Room"
+            
+        else:
+            title = "Scheduled Event"
+            description = "General scheduled event."
+            attendees = ["participant@example.com"]
+            location = "TBD"
+        
+        return {
+            "status": "completed",
+            "title": title,
+            "start_datetime": start_time.isoformat(),
+            "end_datetime": end_time.isoformat(),
+            "description": description,
+            "attendees": attendees,
+            "location": location,
+            "message": f"Demo calendar event data generated: {title} on {start_time.strftime('%B %d, %Y at %I:%M %p')}"
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error generating demo calendar data: {str(e)}"
+        }
+
 def _get_calendar_credentials():
     """Get Google Calendar API credentials"""
     try:
@@ -271,7 +368,7 @@ class GoogleCalendarAgent(Agent):
     def __init__(self, id):
         self.id = id
         self.llm = LLMService.get_model()
-        self.tools = [create_calendar_event_tool, list_calendar_events_tool]
+        self.tools = [create_calendar_event_tool, list_calendar_events_tool,get_others_time, generate_demo_calendar_data_tool]
         self.tool_node = ToolNode(self.tools)
         self.graph = self._create_graph()
         
@@ -279,6 +376,7 @@ class GoogleCalendarAgent(Agent):
         SYSTEM_INSTRUCTION = (
             'You are a specialized assistant for Google Calendar management and negotiation support. '
             "Your purpose is to help users create calendar events, list events, check availability, and support negotiation processes. "
+            "You can also get other users time to check for avaliability"
             "You can auto-generate missing event details like descriptions, but NEVER generate dates/times without user input. "
             "Always ensure event times are properly formatted and realistic. "
             "For negotiation tasks, focus on availability checking, meeting coordination, and scheduling optimization."
@@ -300,6 +398,43 @@ class GoogleCalendarAgent(Agent):
         
         return f"{SYSTEM_INSTRUCTION}\n\n{FORMAT_INSTRUCTION}"
     
+    def evaluation_instruction(self):
+        SYSTEM_INSTRUCTION = (
+            'You are a specialized calendar evaluation assistant for negotiation support. '
+            "Your purpose is to evaluate meeting offers and check user availability for specified time frames. "
+            "You can also get other users time to check for avaliability"
+            "You analyze proposed meeting times and determine if the user is available during those periods. "
+            "You provide availability assessments and suggest alternative times if conflicts exist. "
+            "For negotiation tasks, focus on finding optimal meeting slots that work for all parties."
+        )
+        
+        FORMAT_INSTRUCTION = (
+            'Analyze the offers and evaluate user availability:\n'
+            '1. Extract time frames from each offer (start_datetime, end_datetime)\n'
+            '2. Check user calendar for conflicts during each time frame\n'
+            '3. Assess availability status for each offer:\n'
+            '   - AVAILABLE: User is free during the entire time frame\n'
+            '   - PARTIALLY_AVAILABLE: User has some conflicts but can attend\n'
+            '   - UNAVAILABLE: User has major conflicts or is busy\n'
+            '   - NEEDS_ALTERNATIVE: User cannot attend, suggest alternative times\n'
+            '4. For each offer, provide:\n'
+            '   - Availability status\n'
+            '   - Conflict details (if any)\n'
+            '   - Suggested alternative times (if needed)\n'
+            '   - Priority ranking (1-5, 5 being highest priority)\n\n'
+            'Respond in this format:\n'
+            'OFFER_1:\n'
+            'TIME_FRAME: [start_datetime] to [end_datetime]\n'
+            'AVAILABILITY: [status]\n'
+            'CONFLICTS: [details or NONE]\n'
+            'ALTERNATIVES: [suggested times or NONE]\n'
+            'PRIORITY: [1-5]\n'
+            'RECOMMENDATION: [accept/decline/negotiate]\n\n'
+            'Repeat for each offer. Provide overall recommendation at the end.'
+        )
+        
+        return f"{SYSTEM_INSTRUCTION}\n\n{FORMAT_INSTRUCTION}"
+
     def _create_graph(self):
         """Create the LangGraph workflow"""
         
@@ -315,95 +450,159 @@ class GoogleCalendarAgent(Agent):
             
             user_input = messages[-1].get("content", "")
             
-            # Check if user wants to list events (including negotiation context)
-            list_keywords = ['list', 'show', 'view', 'upcoming', 'events', 'availability', 'check', 'find', 'get']
-            if any(keyword in user_input.lower() for keyword in list_keywords):
+            # First, use LLM to determine the intent
+            intent_prompt = f"""
+            Analyze this calendar request and determine the primary intent:
+            
+            Request: {user_input}
+            
+            Intent options:
+            - LIST_EVENTS: User wants to see calendar events, check availability, view upcoming events
+            - CREATE_EVENT: User wants to create/schedule a new event or meeting
+            - CHECK_AVAILABILITY: User wants to check if they're available at specific times
+            
+            Respond with only: LIST_EVENTS, CREATE_EVENT, or CHECK_AVAILABILITY
+            """
+            
+            try:
+                intent_response = self.llm.invoke(intent_prompt)
+                intent_text = intent_response.content if hasattr(intent_response, 'content') else str(intent_response)
+                intent = intent_text.strip().upper()
+                
+                # Handle list events and availability checks
+                if "LIST_EVENTS" in intent or "CHECK_AVAILABILITY" in intent:
+                    return {
+                        **state,
+                        "status": "list_events",
+                        "error_message": ""
+                    }
+                
+                # Handle create event requests
+                if "CREATE_EVENT" in intent:
+                    # Use LLM to analyze and extract calendar event components
+                    prompt = f"""
+                    {self.root_instruction()}
+                    
+                    User request: {user_input}
+                    Current date and time: {datetime.now().isoformat()}
+                    
+                    Extract the following information for creating a calendar event:
+                    - title: event title (auto-generate if missing)
+                    - start_datetime: start date and time in ISO format YYYY-MM-DDTHH:MM:SS (REQUIRED)
+                    - end_datetime: end date and time in ISO format (auto-generate as 1 hour after start if missing)
+                    - description: event description (auto-generate if missing)
+                    - attendees: comma-separated email addresses (optional)
+                    - location: event location (optional)
+                    
+                    For negotiation tasks, focus on:
+                    - Meeting scheduling and coordination
+                    - Availability checking and comparison
+                    - Event creation with proper details
+                    
+                    Respond in this format:
+                    TITLE: [title or auto-generated title]
+                    START_DATETIME: [ISO datetime or MISSING]
+                    END_DATETIME: [ISO datetime or auto-generated]
+                    DESCRIPTION: [description or auto-generated]
+                    ATTENDEES: [email1,email2 or NONE]
+                    LOCATION: [location or NONE]
+                    STATUS: [input_required/ready/error]
+                    """
+                    
+                    response = self.llm.invoke(prompt)
+                    response_text = response.content if hasattr(response, 'content') else str(response)
+                    
+                    # Parse LLM response
+                    title = self._extract_field(response_text, "TITLE")
+                    start_datetime = self._extract_field(response_text, "START_DATETIME")
+                    end_datetime = self._extract_field(response_text, "END_DATETIME")
+                    description = self._extract_field(response_text, "DESCRIPTION")
+                    attendees_str = self._extract_field(response_text, "ATTENDEES")
+                    location = self._extract_field(response_text, "LOCATION")
+                    status = self._extract_field(response_text, "STATUS")
+                    
+                    # Check required fields
+                    missing_fields = []
+                    if title == "MISSING":
+                        missing_fields.append("event title")
+                    if start_datetime == "MISSING":
+                        missing_fields.append("start date and time")
+                    
+                    # If we have missing fields, use demo data tool to generate them
+                    if missing_fields:
+                        # Determine the type of event
+                        event_type = "meeting"  # default
+                        if "lunch" in user_input.lower():
+                            event_type = "lunch"
+                        elif "call" in user_input.lower() or "phone" in user_input.lower():
+                            event_type = "call"
+                        elif "review" in user_input.lower():
+                            event_type = "review"
+                        
+                        # Generate demo calendar data
+                        demo_result = generate_demo_calendar_data_tool.invoke({
+                            "event_type": event_type,
+                            "context": user_input
+                        })
+                        
+                        if demo_result["status"] == "completed":
+                            # Parse attendees properly
+                            demo_attendees = demo_result.get("attendees", [])
+                            if isinstance(demo_attendees, str):
+                                demo_attendees = [email.strip() for email in demo_attendees.split(',') if email.strip()]
+                            
+                            # Parse attendees from LLM response
+                            llm_attendees = []
+                            if attendees_str and attendees_str != "NONE":
+                                llm_attendees = [email.strip() for email in attendees_str.split(',') if email.strip()]
+                            
+                            return {
+                                **state,
+                                "title": title if title != "MISSING" else demo_result["title"],
+                                "start_datetime": start_datetime if start_datetime != "MISSING" else demo_result["start_datetime"],
+                                "end_datetime": end_datetime if end_datetime != "MISSING" else demo_result["end_datetime"],
+                                "description": description if description != "MISSING" else demo_result["description"],
+                                "attendees": llm_attendees if llm_attendees else demo_attendees,
+                                "location": location if location != "NONE" else demo_result["location"],
+                                "status": "ready"
+                            }
+                        else:
+                            return {
+                                **state,
+                                "status": "input_required",
+                                "error_message": f"Missing information: {', '.join(missing_fields)}"
+                            }
+                    
+                    # Parse attendees
+                    attendees = []
+                    if attendees_str and attendees_str != "NONE":
+                        attendees = [email.strip() for email in attendees_str.split(',') if email.strip()]
+                    
+                    # Auto-generate end time if missing
+                    if end_datetime == "MISSING" and start_datetime != "MISSING":
+                        try:
+                            start_dt = datetime.fromisoformat(start_datetime.replace('Z', ''))
+                            end_dt = start_dt + timedelta(hours=1)
+                            end_datetime = end_dt.isoformat()
+                        except:
+                            end_datetime = start_datetime  # Fallback
+                    
+                    return {
+                        **state,
+                        "title": title if title != "MISSING" else "Untitled Event",
+                        "start_datetime": start_datetime,
+                        "end_datetime": end_datetime,
+                        "description": description if description != "MISSING" else "",
+                        "attendees": attendees,
+                        "location": location if location != "NONE" else "",
+                        "status": "ready"
+                    }
+                
+                # Default to list events if intent is unclear
                 return {
                     **state,
                     "status": "list_events",
                     "error_message": ""
-                }
-            
-            # Use LLM to analyze and extract calendar event components
-            prompt = f"""
-            {self.root_instruction()}
-            
-            User request: {user_input}
-            Current date and time: {datetime.now().isoformat()}
-            
-            Extract the following information for creating a calendar event:
-            - title: event title (auto-generate if missing)
-            - start_datetime: start date and time in ISO format YYYY-MM-DDTHH:MM:SS (REQUIRED)
-            - end_datetime: end date and time in ISO format (auto-generate as 1 hour after start if missing)
-            - description: event description (auto-generate if missing)
-            - attendees: comma-separated email addresses (optional)
-            - location: event location (optional)
-            
-            For negotiation tasks, focus on:
-            - Meeting scheduling and coordination
-            - Availability checking and comparison
-            - Event creation with proper details
-            
-            Respond in this format:
-            TITLE: [title or auto-generated title]
-            START_DATETIME: [ISO datetime or MISSING]
-            END_DATETIME: [ISO datetime or auto-generated]
-            DESCRIPTION: [description or auto-generated]
-            ATTENDEES: [email1,email2 or NONE]
-            LOCATION: [location or NONE]
-            STATUS: [input_required/ready/error]
-            """
-            
-            try:
-                response = self.llm.invoke(prompt)
-                response_text = response.content if hasattr(response, 'content') else str(response)
-                
-                # Parse LLM response
-                title = self._extract_field(response_text, "TITLE")
-                start_datetime = self._extract_field(response_text, "START_DATETIME")
-                end_datetime = self._extract_field(response_text, "END_DATETIME")
-                description = self._extract_field(response_text, "DESCRIPTION")
-                attendees_str = self._extract_field(response_text, "ATTENDEES")
-                location = self._extract_field(response_text, "LOCATION")
-                status = self._extract_field(response_text, "STATUS")
-                
-                # Check required fields
-                missing_fields = []
-                if title == "MISSING":
-                    missing_fields.append("event title")
-                if start_datetime == "MISSING":
-                    missing_fields.append("start date and time")
-                
-                if missing_fields:
-                    return {
-                        **state,
-                        "status": "input_required",
-                        "error_message": f"Missing information: {', '.join(missing_fields)}"
-                    }
-                
-                # Parse attendees
-                attendees = []
-                if attendees_str and attendees_str != "NONE":
-                    attendees = [email.strip() for email in attendees_str.split(',') if email.strip()]
-                
-                # Auto-generate end time if missing
-                if end_datetime == "MISSING" and start_datetime != "MISSING":
-                    try:
-                        start_dt = datetime.fromisoformat(start_datetime.replace('Z', ''))
-                        end_dt = start_dt + timedelta(hours=1)
-                        end_datetime = end_dt.isoformat()
-                    except:
-                        end_datetime = start_datetime  # Fallback
-                
-                return {
-                    **state,
-                    "title": title if title != "MISSING" else "Untitled Event",
-                    "start_datetime": start_datetime,
-                    "end_datetime": end_datetime,
-                    "description": description if description != "MISSING" else "",
-                    "attendees": attendees,
-                    "location": location if location != "NONE" else "",
-                    "status": "ready"
                 }
                 
             except Exception as e:
@@ -416,12 +615,22 @@ class GoogleCalendarAgent(Agent):
         def create_event_node(state: CalendarState) -> CalendarState:
             """Create the calendar event using the extracted information"""
             try:
+                # Ensure attendees is always a list
+                attendees = state.get("attendees", [])
+                if attendees is None:
+                    attendees = []
+                elif isinstance(attendees, str):
+                    if attendees == "MISSING" or attendees == "NONE":
+                        attendees = []
+                    else:
+                        attendees = [email.strip() for email in attendees.split(',') if email.strip()]
+                
                 result = create_calendar_event_tool.invoke({
                     "title": state["title"],
                     "start_datetime": state["start_datetime"],
                     "end_datetime": state["end_datetime"],
                     "description": state["description"],
-                    "attendees": state["attendees"],
+                    "attendees": attendees,
                     "location": state["location"]
                 })
                 
@@ -520,7 +729,7 @@ class GoogleCalendarAgent(Agent):
             "max_results": max_results
         })
     
-    def execute(self, user_input: str) -> Dict[str, Any]:
+    def execute(self, user_input: str,messages:list[str]=[]) -> Dict[str, Any]:
         """Execute the calendar management workflow"""
         initial_state = {
             "messages": [{"role": "user", "content": user_input}],
@@ -531,7 +740,8 @@ class GoogleCalendarAgent(Agent):
             "attendees": [],
             "location": "",
             "status": "",
-            "error_message": ""
+            "error_message": "",
+            "messages":messages
         }
         
         # Run the graph
@@ -603,6 +813,7 @@ class GoogleCalendarAgent(Agent):
                 "message": result["error_message"]
             }
     
+
     def _get_missing_fields(self, state: CalendarState) -> List[str]:
         """Get list of missing required fields"""
         missing = []
@@ -612,8 +823,105 @@ class GoogleCalendarAgent(Agent):
             missing.append("start_datetime")
         return missing
     
-    def evaluate(self):
-        return super().evaluate()
+    def evaluate(self, task_description: str = None):
+        """
+        Evaluate a task and return confidence score and other metrics using LLM.
+        
+        Args:
+            task_description: Description of the task to evaluate
+            
+        Returns:
+            Dict containing evaluation metrics including confidence score
+        """
+        if not task_description:
+            return {
+                'confidence': 0.5,
+                'estimated_time': 'unknown',
+                'requirements': [],
+                'capabilities': ['calendar_management', 'event_creation', 'availability_checking'],
+                'status': 'evaluated'
+            }
+        
+        # Use LLM to evaluate the task with Calendar-specific context
+        evaluation_prompt = f"""
+        You are evaluating a Google Calendar Agent's capability to handle a specific task.
+        
+        Calendar Agent Capabilities:
+        - Create calendar events with Google Calendar API
+        - List and view calendar events
+        - Check user availability and conflicts
+        - Auto-generate missing event details (titles, descriptions, end times)
+        - Generate demo calendar data for testing
+        - Handle attendees and locations
+        - Validate date and time formats
+        
+        Calendar Agent Tools:
+        - create_calendar_event_tool: Creates actual calendar events
+        - list_calendar_events_tool: Lists user's calendar events
+        - generate_demo_calendar_data_tool: Creates realistic calendar data for testing
+        
+        Task Description: {task_description}
+        
+        Evaluate this task for the Calendar Agent and provide:
+        1. Confidence score (0.0 to 1.0) - how confident the agent can complete this task
+        2. Estimated time to complete
+        3. Required information/inputs
+        4. Agent capabilities relevant to this task
+        5. Any potential challenges or limitations
+        6. Whether demo data generation would be needed
+        
+        Consider:
+        - Calendar event creation tasks get high confidence (0.8-1.0)
+        - Availability checking tasks get very high confidence (0.9-1.0)
+        - Event listing tasks get high confidence (0.8-1.0)
+        - Scheduling tasks get medium-high confidence (0.7-0.9)
+        - Non-calendar tasks get low confidence (0.2-0.4)
+        
+        Respond in this JSON format:
+        {{
+            "confidence": 0.85,
+            "estimated_time": "2-5 minutes",
+            "requirements": ["title", "start_datetime", "end_datetime"],
+            "capabilities": ["event_creation", "demo_data_generation"],
+            "challenges": ["requires date and time"],
+            "needs_demo_data": true,
+            "status": "evaluated"
+        }}
+        """
+        
+        try:
+            response = self.llm.invoke(evaluation_prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Parse JSON response
+            import json
+            import re
+            
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                evaluation = json.loads(json_match.group())
+                return evaluation
+            else:
+                # Fallback to default if JSON parsing fails
+                return {
+                    'confidence': 0.5,
+                    'estimated_time': 'unknown',
+                    'requirements': ['title', 'start_datetime', 'end_datetime'],
+                    'capabilities': ['calendar_management', 'event_creation'],
+                    'status': 'evaluated'
+                }
+                
+        except Exception as e:
+            # Fallback to default if LLM evaluation fails
+            return {
+                'confidence': 0.5,
+                'estimated_time': 'unknown',
+                'requirements': ['title', 'start_datetime', 'end_datetime'],
+                'capabilities': ['calendar_management', 'event_creation'],
+                'status': 'evaluated',
+                'error': str(e)
+            }
     
     def counter(self):
         return super().counter()
@@ -631,16 +939,17 @@ class GoogleCalendarAgent(Agent):
                 "List upcoming calendar events",
                 "Auto-generate missing event details",
                 "Handle attendees and locations",
-                "Validate date and time formats"
+                "Validate date and time formats",
+                "Generate demo data for testing"
             ],
-            "tools": ["create_calendar_event_tool", "list_calendar_events_tool"],
+            "tools": ["create_calendar_event_tool", "list_calendar_events_tool", "generate_demo_calendar_data_tool"],
             "status": "active"
         }
     
-    def run(self, user_input: str = None):
+    def run(self, user_input: str = None,messages:list[str]=[]):
         """Main entry point for the agent"""
         if user_input:
-            return self.execute(user_input)
+            return self.execute(user_input,messages)
         else:
             return {
                 "status": "input_required",

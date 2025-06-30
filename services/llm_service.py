@@ -60,7 +60,6 @@ class LLMService:
     You are a multi-agent task planner. Your job is to take a complex task and decompose it into smaller subtasks that can be assigned to different intelligent agents. Each agent has specific capabilities and responsibilities.
     Your output must be a structured breakdown of the task, assigning specific subtasks to the relevant agents. Think step-by-step and ensure subtasks are clear, actionable, and aligned with each agent's capabilities.
     """
-
         examples = [
             {
                 "input": "Organize a team lunch next week at a time everyone is free.",

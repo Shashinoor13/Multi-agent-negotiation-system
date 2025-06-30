@@ -75,11 +75,92 @@ def tavily_search_tool(query: str, max_results: int = 5) -> Dict[str, Any]:
             "message": f"Failed to perform search with Tavily: {str(e)}"
         }
 
+# Specialized search tool for checking holidays and events
+@tool
+def check_holidays_events_tool(date: str, location: str = "general") -> Dict[str, Any]:
+    """
+    Search for holidays, events, and other factors that might block scheduling on a specific date.
+    
+    Args:
+        date: The date to check in YYYY-MM-DD format
+        location: The location to check (city, country, or "general" for worldwide)
+    
+    Returns:
+        Dict with status, message, and blocking factors found
+    """
+    try:
+        tavily_api_key = os.getenv('TAVILY_API_KEY')
+        
+        if not tavily_api_key:
+            return {
+                "status": "error",
+                "message": "Tavily API key not configured. Please set TAVILY_API_KEY environment variable."
+            }
+        
+        client = TavilyClient(api_key=tavily_api_key)
+        
+        # Create specific search queries for different types of blocking factors
+        search_queries = [
+            f"public holidays {date} {location}",
+            f"major events {date} {location}",
+            f"conferences {date} {location}",
+            f"business closures {date} {location}",
+            f"transportation strikes {date} {location}",
+            f"weather events {date} {location}"
+        ]
+        
+        all_results = []
+        
+        for query in search_queries:
+            try:
+                response = client.search(query=query, search_depth="basic", max_results=3, include_answer=False)
+                if response and response['results']:
+                    for result in response['results']:
+                        all_results.append({
+                            'query': query,
+                            'title': result['title'],
+                            'content': result['content'][:300],
+                            'url': result['url']
+                        })
+            except Exception as e:
+                # Continue with other queries if one fails
+                continue
+        
+        if all_results:
+            # Format results
+            formatted_results = []
+            for result in all_results:
+                formatted_results.append(f"Query: {result['query']}\nTitle: {result['title']}\nContent: {result['content']}\nURL: {result['url']}")
+            
+            results_string = "\n---\n".join(formatted_results)
+            
+            return {
+                "status": "completed",
+                "message": f"Found potential blocking factors for {date} in {location}",
+                "blocking_factors": results_string,
+                "date": date,
+                "location": location
+            }
+        else:
+            return {
+                "status": "completed",
+                "message": f"No significant blocking factors found for {date} in {location}",
+                "blocking_factors": "No relevant blocking factors found",
+                "date": date,
+                "location": location
+            }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to check holidays and events: {str(e)}"
+        }
+
 class SearchAgent(Agent):
     def __init__(self, id):
         self.id = id
         self.llm = LLMService.get_model()
-        self.tools = [tavily_search_tool] # <--- Changed tool here
+        self.tools = [tavily_search_tool, check_holidays_events_tool]
         self.tool_node = ToolNode(self.tools)
         self.graph = self._create_graph()
         
@@ -99,6 +180,52 @@ class SearchAgent(Agent):
             'If the search query is missing or unclear, set status to "input_required".\n'
             'If the search query is identified, set status to "ready".\n'
             'After a search, reflect on the results and provide a concise summary or direct answer to the user.'
+        )
+        
+        return f"{SYSTEM_INSTRUCTION}\n\n{FORMAT_INSTRUCTION}"
+    
+    def evaluation_instruction(self):
+        SYSTEM_INSTRUCTION = (
+            'You are a specialized search evaluation assistant for negotiation support. '
+            "Your purpose is to evaluate meeting offers by searching for holidays, events, and other factors "
+            "that might block or affect the requested time frames. "
+            "You search for public holidays, major events, weather conditions, and other relevant information "
+            "that could impact scheduling and availability. "
+            "For negotiation tasks, focus on identifying potential scheduling conflicts and external factors."
+        )
+        
+        FORMAT_INSTRUCTION = (
+            'Analyze the offers and search for blocking factors:\n'
+            '1. Extract time frames from each offer (start_datetime, end_datetime)\n'
+            '2. Search for holidays, events, and other factors that might block each time frame:\n'
+            '   - Public holidays in the relevant location\n'
+            '   - Major events, conferences, or gatherings\n'
+            '   - Weather conditions or natural events\n'
+            '   - Transportation issues or strikes\n'
+            '   - Business closures or special hours\n'
+            '3. Assess blocking status for each offer:\n'
+            '   - NO_BLOCKS: No significant blocking factors found\n'
+            '   - MINOR_BLOCKS: Some minor factors that might affect attendance\n'
+            '   - MAJOR_BLOCKS: Significant events that could prevent attendance\n'
+            '   - HOLIDAY_BLOCK: Falls on a public holiday\n'
+            '   - EVENT_BLOCK: Conflicts with major events\n'
+            '4. For each offer, provide:\n'
+            '   - Blocking status\n'
+            '   - Specific blocking factors found\n'
+            '   - Location-specific considerations\n'
+            '   - Alternative suggestions (if needed)\n'
+            '   - Risk assessment (LOW/MEDIUM/HIGH)\n\n'
+            'Respond in this format:\n'
+            'OFFER_1:\n'
+            'TIME_FRAME: [start_datetime] to [end_datetime]\n'
+            'LOCATION: [location or GENERAL]\n'
+            'BLOCKING_STATUS: [status]\n'
+            'BLOCKING_FACTORS: [specific factors found or NONE]\n'
+            'LOCATION_FACTORS: [location-specific considerations or NONE]\n'
+            'ALTERNATIVES: [suggested alternatives or NONE]\n'
+            'RISK_LEVEL: [LOW/MEDIUM/HIGH]\n'
+            'RECOMMENDATION: [proceed/caution/avoid]\n\n'
+            'Repeat for each offer. Provide overall recommendation at the end.'
         )
         
         return f"{SYSTEM_INSTRUCTION}\n\n{FORMAT_INSTRUCTION}"
@@ -276,14 +403,15 @@ class SearchAgent(Agent):
         """Perform a web search."""
         return tavily_search_tool.invoke({"query": query})
 
-    def execute(self, user_input: str) -> Dict[str, Any]:
+    def execute(self, user_input: str,messages:list[str]=[]) -> Dict[str, Any]:
         """Execute the web search workflow"""
         initial_state = {
             "messages": [{"role": "user", "content": user_input}],
             "query": "",
             "search_results": "",
             "status": "",
-            "error_message": ""
+            "error_message": "",
+            "messages":messages
         }
         
         # Run the graph
@@ -311,8 +439,104 @@ class SearchAgent(Agent):
                 "message": result["error_message"]
             }
     
-    def evaluate(self):
-        return super().evaluate()
+    def evaluate(self, task_description: str = None):
+        """
+        Evaluate a task and return confidence score and other metrics using LLM.
+        
+        Args:
+            task_description: Description of the task to evaluate
+            
+        Returns:
+            Dict containing evaluation metrics including confidence score
+        """
+        if not task_description:
+            return {
+                'confidence': 0.5,
+                'estimated_time': 'unknown',
+                'requirements': [],
+                'capabilities': ['web_search', 'information_gathering', 'research'],
+                'status': 'evaluated'
+            }
+        
+        # Use LLM to evaluate the task with Search-specific context
+        evaluation_prompt = f"""
+        You are evaluating a Web Search Agent's capability to handle a specific task.
+        
+        Search Agent Capabilities:
+        - Perform web searches using DuckDuckGo API
+        - Gather information from search results
+        - Research topics and provide summaries
+        - Check for holidays, events, and scheduling conflicts
+        - Evaluate meeting offers and availability
+        - Find relevant information for decision making
+        - Analyze search results for relevance and accuracy
+        
+        Search Agent Tools:
+        - search_tool: Performs web searches and returns results
+        - evaluate_meeting_offer_tool: Analyzes meeting offers for conflicts
+        
+        Task Description: {task_description}
+        
+        Evaluate this task for the Search Agent and provide:
+        1. Confidence score (0.0 to 1.0) - how confident the agent can complete this task
+        2. Estimated time to complete
+        3. Required information/inputs
+        4. Agent capabilities relevant to this task
+        5. Any potential challenges or limitations
+        6. Whether the task requires external information gathering
+        
+        Consider:
+        - Research and information gathering tasks get high confidence (0.8-1.0)
+        - Web search tasks get very high confidence (0.9-1.0)
+        - Holiday/event checking tasks get high confidence (0.8-1.0)
+        - Meeting evaluation tasks get medium-high confidence (0.7-0.9)
+        - Non-search tasks get low confidence (0.2-0.4)
+        
+        Respond in this JSON format:
+        {{
+            "confidence": 0.85,
+            "estimated_time": "1-3 minutes",
+            "requirements": ["search_query", "topic"],
+            "capabilities": ["web_search", "information_gathering"],
+            "challenges": ["requires specific search terms"],
+            "needs_external_data": true,
+            "status": "evaluated"
+        }}
+        """
+        
+        try:
+            response = self.llm.invoke(evaluation_prompt)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Parse JSON response
+            import json
+            import re
+            
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                evaluation = json.loads(json_match.group())
+                return evaluation
+            else:
+                # Fallback to default if JSON parsing fails
+                return {
+                    'confidence': 0.5,
+                    'estimated_time': 'unknown',
+                    'requirements': ['search_query', 'topic'],
+                    'capabilities': ['web_search', 'information_gathering'],
+                    'status': 'evaluated'
+                }
+                
+        except Exception as e:
+            # Fallback to default if LLM evaluation fails
+            return {
+                'confidence': 0.5,
+                'estimated_time': 'unknown',
+                'requirements': ['search_query', 'topic'],
+                'capabilities': ['web_search', 'information_gathering'],
+                'status': 'evaluated',
+                'error': str(e)
+            }
     
     def counter(self):
         return super().counter()
@@ -324,21 +548,24 @@ class SearchAgent(Agent):
         return {
             "id": self.id,
             "name": "Search Agent",
-            "description": "Specialized agent for web searching using LangGraph workflow and Tavily Search.",
+            "description": "Specialized agent for web searching and offer evaluation using LangGraph workflow and Tavily Search.",
             "capabilities": [
                 "Extract search queries from natural language",
                 "Perform web searches using Tavily API",
                 "Summarize search results",
-                "Handle missing search queries"
+                "Handle missing search queries",
+                "Evaluate offers for holidays and events",
+                "Check for blocking factors in scheduling",
+                "Provide risk assessments for meeting times"
             ],
-            "tools": ["tavily_search_tool"],
+            "tools": ["tavily_search_tool", "check_holidays_events_tool"],
             "status": "active"
         }
     
-    def run(self, user_input: str = None):
+    def run(self, user_input: str = None,messages:list[str]=[]):
         """Main entry point for the agent"""
         if user_input:
-            return self.execute(user_input)
+            return self.execute(user_input,messages)
         else:
             return {
                 "status": "input_required",
