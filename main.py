@@ -1,16 +1,13 @@
-# Example usage
-import json
 from agents.calendar_agent import GoogleCalendarAgent
 from agents.gmail_agent import GmailAgent
 from agents.search_agent import SearchAgent
 from environment.negotiation_environment import NegotiationEnvironment
-from services.llm_service import LLMService
 from strategy.simple import SimpleNegotiationStrategy
 
 
 if __name__ == "__main__":
 
-    task = "Plan a meeting with Jhon next week,his email is ristashrestha10@gmail.com"
+    task = "email rista shrestha about the meeting at 10 on monday her email is ristashrestha10@gmail.com"
 
     # Avaliable agents
     gmail_agent = GmailAgent("gmail_agent_01")

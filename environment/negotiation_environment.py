@@ -3,6 +3,7 @@ from agents.base import Agent
 import time
 from threading import Thread
 
+
 class Task:
     def __init__(self,id,task) -> None:
         self.id = id
@@ -50,76 +51,204 @@ class NegotiationEnvironment:
             yield f"❌ Error splitting or parsing task: {parsed_result['message']}"
             yield f"Raw response: {parsed_result.get('raw_response', 'N/A')}"
     
+    # def distribute_task(self):
+    #     """Distribute tasks to agents with improved initial assignment logic"""
+    #     yield "🔄 Phase 0: Initial Task Distribution with Cross-Evaluation"
+    #     yield "-" * 60
+        
+    #     # First, let's evaluate all possible task-agent combinations
+    #     all_evaluations = {}
+        
+    #     yield "🔍 Evaluating all possible task-agent combinations..."
+    #     for task in self.tasks:
+    #         all_evaluations[task.id] = {}
+    #         for agent in self.agents:
+    #             evaluation = agent.evaluate(task.task)
+    #             all_evaluations[task.id][agent.id] = evaluation
+    #             yield f"   Task {task.id} + Agent {agent.id}: confidence {evaluation.get('confidence', 'N/A')}"
+        
+    #     # Find optimal assignments using greedy approach
+    #     yield "\n🎯 Finding optimal initial assignments..."
+    #     optimal_assignments = []
+    #     used_agents = set()
+        
+    #     # Sort tasks by complexity (lower confidence = more complex)
+    #     task_complexity = []
+    #     for task_id, evaluations in all_evaluations.items():
+    #         avg_confidence = sum(eval.get('confidence', 0.5) for eval in evaluations.values()) / len(evaluations)
+    #         task_complexity.append((task_id, avg_confidence))
+        
+    #     # Sort by complexity (most complex first)
+    #     task_complexity.sort(key=lambda x: x[1])  # Lower confidence = more complex
+        
+    #     for task_id, _ in task_complexity:
+    #         task = next(t for t in self.tasks if t.id == task_id)
+    #         evaluations = all_evaluations[task_id]
+            
+    #         # Find best available agent for this task
+    #         best_agent = None
+    #         best_confidence = -1
+            
+    #         for agent_id, evaluation in evaluations.items():
+    #             if agent_id not in used_agents:
+    #                 confidence = evaluation.get('confidence', 0.0)
+    #                 if confidence > best_confidence:
+    #                     best_confidence = confidence
+    #                     best_agent = next(a for a in self.agents if a.id == agent_id)
+            
+    #         if best_agent:
+    #             optimal_assignments.append({
+    #                 'task_id': task_id,
+    #                 'assigned_to': best_agent.id,
+    #                 'confidence': best_confidence
+    #             })
+    #             used_agents.add(best_agent.id)
+    #             yield f"   ✅ Task {task_id} → Agent {best_agent.id} (confidence: {best_confidence:.2f})"
+    #         else:
+    #             # If no optimal agent available, use LLM-based assignment
+    #             yield f"   ⚠️  No optimal agent available for Task {task_id}, using LLM assignment"
+    #             from services.llm_service import LLMService
+    #             llm = LLMService()
+    #             parsed_result = llm.select_agents_according_to_task(agents=self.agents, tasks=[task])
+    #             if parsed_result["status"] == "success" and parsed_result["assignments"]:
+    #                 assignment = parsed_result["assignments"][0]
+    #                 optimal_assignments.append(assignment)
+    #                 yield f"   ✅ Task {task_id} → Agent {assignment['assigned_to']} (LLM assigned)"
+        
+    #     # Create task assignments
+    #     yield "\n📋 Creating task assignments..."
+    #     for assignment_info in optimal_assignments:
+    #         task_id = assignment_info['task_id']
+    #         agent_id = assignment_info['assigned_to']
+            
+    #         # Find the task and agent
+    #         task = next((t for t in self.tasks if t.id == task_id), None)
+    #         agent = next((a for a in self.agents if a.id == agent_id), None)
+            
+    #         if task and agent:
+    #             assignment = TaskAssignment(task, agent)
+    #             self.taskAssignments.append(assignment)
+                
+    #             # Show assignment details
+    #             task_content = task.task
+    #             confidence = assignment_info.get('confidence', 'N/A')
+    #             yield f"📋 Task {task_id} → {agent_id}"
+    #             yield f"   Content: {task_content}"
+    #             yield f"   Confidence: {confidence}"
+    #             yield f"   ✅ Assignment created successfully"
+    #         else:
+    #             yield f"   ❌ Failed to create assignment for Task {task_id} → Agent {agent_id}"
+        
+    #     yield "-" * 60
+    #     yield f"✅ Initial distribution complete: {len(self.taskAssignments)} assignments created"
+
     def distribute_task(self):
-        """Distribute tasks to agents with improved initial assignment logic"""
-        yield "🔄 Phase 0: Initial Task Distribution with Cross-Evaluation"
+        """Distribute tasks to agents using similarity search with embeddings"""
+        yield "🔄 Phase 0: Initial Task Distribution with Similarity Search"
+        yield "-" * 60
+        from services.llm_service import LLMService
         
-        # First, let's evaluate all possible task-agent combinations
-        all_evaluations = {}
+        # Initialize LLM service for embeddings
+        llm = LLMService()
         
-        yield "🔍 Evaluating all possible task-agent combinations..."
+        # Generate embeddings for all agents
+        yield "🔍 Generating agent embeddings..."
+        agent_embeddings = []
+        agent_cards = []
+        
+        for agent in self.agents:
+            agent_card = agent.generate_agent_card()
+            agent_cards.append(agent_card)
+            
+            # Convert agent card to searchable text
+            agent_text = self._agent_card_to_text(agent_card)
+            embedding = llm.generate_embeddings(agent_text)
+            agent_embeddings.append(embedding)
+            yield f"   ✅ Generated embedding for Agent {agent.id}"
+        import faiss
+        import numpy as np
+        # Stack embeddings and create Faiss index
+        all_agent_embeddings = np.vstack(agent_embeddings)
+        agent_index = faiss.IndexFlatL2(all_agent_embeddings.shape[1])
+        agent_index.add(all_agent_embeddings)
+        
+        yield f"📊 Created Faiss index with {len(agent_embeddings)} agent embeddings"
+        
+        # Generate embeddings for all tasks and find best matches
+        yield "\n🎯 Finding optimal task-agent matches using similarity search..."
+        task_similarities = {}
+        
         for task in self.tasks:
-            all_evaluations[task.id] = {}
-            lines = [f"📝 Task {task.id} evaluations:"]
-            for agent in self.agents:
-                evaluation = agent.evaluate(task.task)
-                all_evaluations[task.id][agent.id] = evaluation
-                lines.append(f"   • Agent {agent.id}: confidence {evaluation.get('confidence', 'N/A')}")
-            yield "\n\n".join(lines)
+            task_text = task.task
+            task_embedding = llm.generate_embeddings(task_text)
+            
+            # Search for most similar agents
+            k = min(len(self.agents), 3)  # Get top 3 matches or all agents if fewer
+            distances, indices = agent_index.search(np.array(task_embedding).reshape(1, -1), k)
+            
+            # Convert distances to similarities (lower distance = higher similarity)
+            similarities = 1 / (1 + distances[0])  # Convert L2 distance to similarity score
+            
+            task_similarities[task.id] = []
+            for i, (distance, similarity, agent_idx) in enumerate(zip(distances[0], similarities, indices[0])):
+                agent = self.agents[agent_idx]
+                task_similarities[task.id].append({
+                    'agent_id': agent.id,
+                    'agent': agent,
+                    'similarity': similarity,
+                    'distance': distance,
+                    'rank': i + 1
+                })
+                yield f"   Task {task.id} → Agent {agent.id}: similarity {similarity:.3f} (rank {i+1})"
         
-        # Find optimal assignments using greedy approach
+        # Find optimal assignments using greedy approach based on similarity
         yield "\n🎯 Finding optimal initial assignments..."
         optimal_assignments = []
         used_agents = set()
-
-        # Sort tasks by complexity (lower confidence = more complex)
-        task_complexity = []
-        for task_id, evaluations in all_evaluations.items():
-            avg_confidence = sum(eval.get('confidence', 0.5) for eval in evaluations.values()) / len(evaluations)
-            task_complexity.append((task_id, avg_confidence))
-
-        # Sort by complexity (most complex first)
-        task_complexity.sort(key=lambda x: x[1])  # Lower confidence = more complex
-
-        # Collect assignment lines for grouped output
-        assignment_lines = ["✅ Optimal Assignments Generated", f"📊 Total tasks assigned: {len(task_complexity)}", ""]
-
-        for task_id, _ in task_complexity:
+        
+        # Sort tasks by their best similarity score (highest first)
+        task_priority = []
+        for task_id, similarities in task_similarities.items():
+            best_similarity = max(sim['similarity'] for sim in similarities)
+            task_priority.append((task_id, best_similarity))
+        
+        # Sort by best similarity (highest first - these are easiest to assign well)
+        task_priority.sort(key=lambda x: x[1], reverse=True)
+        
+        for task_id, _ in task_priority:
             task = next(t for t in self.tasks if t.id == task_id)
-            evaluations = all_evaluations[task_id]
+            similarities = task_similarities[task_id]
             
             # Find best available agent for this task
             best_agent = None
-            best_confidence = -1
+            best_similarity = -1
             
-            for agent_id, evaluation in evaluations.items():
+            for sim_info in similarities:
+                agent_id = sim_info['agent_id']
                 if agent_id not in used_agents:
-                    confidence = evaluation.get('confidence', 0.0)
-                    if confidence > best_confidence:
-                        best_confidence = confidence
-                        best_agent = next(a for a in self.agents if a.id == agent_id)
+                    similarity = sim_info['similarity']
+                    if similarity > best_similarity:
+                        best_similarity = similarity
+                        best_agent = sim_info['agent']
             
             if best_agent:
                 optimal_assignments.append({
                     'task_id': task_id,
                     'assigned_to': best_agent.id,
-                    'confidence': best_confidence
+                    'similarity': best_similarity
                 })
                 used_agents.add(best_agent.id)
-                assignment_lines.append(f"📋 Task {task_id}: Assigned to Agent {best_agent.id} (confidence: {best_confidence:.2f})")
+                yield f"   ✅ Task {task_id} → Agent {best_agent.id} (similarity: {best_similarity:.3f})"
             else:
-                # If no optimal agent available, use LLM-based assignment
-                from services.llm_service import LLMService
-                llm = LLMService()
-                parsed_result = llm.select_agents_according_to_task(agents=self.agents, tasks=[task])
-                if parsed_result["status"] == "success" and parsed_result["assignments"]:
-                    assignment = parsed_result["assignments"][0]
-                    optimal_assignments.append(assignment)
-                    assignment_lines.append(f"⚠️ Task {task_id}: No optimal agent available, assigned by LLM to Agent {assignment['assigned_to']}")
-
-        # Finally, yield all grouped lines together
-        yield "\n\n".join(assignment_lines)
-
+                # If no agents available, assign to best match regardless
+                best_match = similarities[0]  # Already sorted by similarity
+                optimal_assignments.append({
+                    'task_id': task_id,
+                    'assigned_to': best_match['agent_id'],
+                    'similarity': best_match['similarity']
+                })
+                yield f"   ⚠️  Task {task_id} → Agent {best_match['agent_id']} (similarity: {best_match['similarity']:.3f}) - agent reused"
+        
         # Create task assignments
         yield "\n📋 Creating task assignments..."
         for assignment_info in optimal_assignments:
@@ -136,18 +265,36 @@ class NegotiationEnvironment:
                 
                 # Show assignment details
                 task_content = task.task
-                confidence = assignment_info.get('confidence', 'N/A')
-                yield f"""📋 Task {task_id} → {agent_id} \n
-                Content: {task_content} \n
-                Confidence: {confidence} \n
-                ✅ Assignment created successfully"""
+                similarity = assignment_info.get('similarity', 'N/A')
+                yield f"📋 Task {task_id} → {agent_id}"
+                yield f"   Content: {task_content}"
+                yield f"   Similarity: {similarity:.3f}"
+                yield f"   ✅ Assignment created successfully"
             else:
                 yield f"   ❌ Failed to create assignment for Task {task_id} → Agent {agent_id}"
         
 
         yield f"✅ Initial distribution complete: {len(self.taskAssignments)} assignments created"
 
-
+    def _agent_card_to_text(self, agent_card):
+        """Convert agent card dictionary to searchable text"""
+        text_parts = []
+        
+        # Add name and description
+        text_parts.append(agent_card.get('name', ''))
+        text_parts.append(agent_card.get('description', ''))
+        
+        # Add capabilities
+        capabilities = agent_card.get('capabilities', [])
+        if capabilities:
+            text_parts.append('Capabilities: ' + ', '.join(capabilities))
+        
+        # Add tools
+        tools = agent_card.get('tools', [])
+        if tools:
+            text_parts.append('Tools: ' + ', '.join(tools))
+        
+        return ' '.join(text_parts)
 
     def negotiate(self):
         """Execute the negotiation process with agent-to-agent communication"""

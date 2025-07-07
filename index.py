@@ -8,6 +8,8 @@ from agents.calendar_agent import GoogleCalendarAgent
 from agents.gmail_agent import GmailAgent
 from agents.search_agent import SearchAgent
 from environment.negotiation_environment import NegotiationEnvironment
+from services.embedding_service import save_embeddings
+from services.llm_service import LLMService
 from strategy.simple import SimpleNegotiationStrategy
 
 app = FastAPI()
@@ -16,10 +18,11 @@ app = FastAPI()
 class State:
     output_messages: list[str]
     is_negotiating: bool = False
+    task:str
+    input:str
     count = 0
-    user_task: str = "Plan a meeting with Rista next week, her email is ristashrestha10@gmail.com"
 
-async def start_negotiation(event: me.ClickEvent):
+async def start_negotiation(e:me.ClickEvent):
     state = me.state(State)
     state.output_messages = []  # Clear previous messages for a new run
     state.is_negotiating = True

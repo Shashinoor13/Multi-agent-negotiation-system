@@ -182,7 +182,7 @@ def get_others_time():
             {
                 "id": "123",
                 "title": "Dummy Title",
-                "start": "2022-01-01T00:00:00Z",
+                "start": "2025-07-08T00:00:00Z",
                 "location": "Dummy Location",
                 "description": "Dummy Description",
                 "attendees": ["dummy@example.com"]
@@ -190,6 +190,135 @@ def get_others_time():
         ]
     }
 
+
+@tool
+def find_available_time_tool(
+    duration_minutes: int = 60,
+    preferred_days: List[str] = None,
+    preferred_hours: List[int] = None,
+    attendees: List[str] = None,
+    start_date: str = "",
+    end_date: str = ""
+) -> Dict[str, Any]:
+    """
+    Find available time slots by comparing user's calendar with others' calendars.
+    
+    Args:
+        duration_minutes: Duration of the meeting in minutes (default: 60)
+        preferred_days: List of preferred days (e.g., ['Monday', 'Tuesday'])
+        preferred_hours: List of preferred hours (e.g., [9, 10, 11, 14, 15])
+        attendees: List of attendee email addresses
+        start_date: Start date to search from (ISO format)
+        end_date: End date to search until (ISO format)
+    
+    Returns:
+        Dict with suggested time slots
+    """
+    try:
+        # Set default search range
+        if not start_date:
+            start_date = datetime.utcnow().isoformat() + 'Z'
+        if not end_date:
+            end_date = (datetime.utcnow() + timedelta(days=7)).isoformat() + 'Z'
+        
+        # Set default preferences
+        if not preferred_days:
+            preferred_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        if not preferred_hours:
+            preferred_hours = [9, 10, 11, 14, 15, 16]  # 9 AM to 4 PM
+        
+        # Get my calendar events
+        my_events_result = list_calendar_events_tool.invoke({
+            "start_date": start_date,
+            "end_date": end_date,
+            "max_results": 50
+        })
+        
+        my_events = my_events_result.get("events", []) if my_events_result["status"] == "completed" else []
+        
+        # Get others' calendar events
+        others_events = []
+        if attendees:
+            for attendee in attendees:
+                others_result = get_others_time.invoke({
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "attendee_email": attendee
+                })
+                if others_result["status"] == "completed":
+                    others_events.extend(others_result.get("events", []))
+        
+        # Combine all busy times
+        all_busy_times = []
+        for event in my_events + others_events:
+            if event.get('start') and event.get('end'):
+                all_busy_times.append({
+                    'start': event['start'],
+                    'end': event['end'],
+                    'title': event.get('title', 'Busy')
+                })
+        
+        # Find available slots
+        available_slots = []
+        current_time = datetime.fromisoformat(start_date.replace('Z', ''))
+        end_time = datetime.fromisoformat(end_date.replace('Z', ''))
+        
+        while current_time < end_time:
+            # Check if this day is preferred
+            if current_time.strftime('%A') in preferred_days:
+                # Check each preferred hour
+                for hour in preferred_hours:
+                    slot_start = current_time.replace(hour=hour, minute=0, second=0, microsecond=0)
+                    slot_end = slot_start + timedelta(minutes=duration_minutes)
+                    
+                    # Skip if slot is in the past
+                    if slot_start < datetime.now():
+                        continue
+                    
+                    # Check if this slot conflicts with any busy time
+                    is_available = True
+                    for busy_time in all_busy_times:
+                        busy_start = datetime.fromisoformat(busy_time['start'].replace('Z', ''))
+                        busy_end = datetime.fromisoformat(busy_time['end'].replace('Z', ''))
+                        
+                        # Check for overlap
+                        if (slot_start < busy_end and slot_end > busy_start):
+                            is_available = False
+                            break
+                    
+                    if is_available:
+                        available_slots.append({
+                            'start_datetime': slot_start.isoformat(),
+                            'end_datetime': slot_end.isoformat(),
+                            'day': slot_start.strftime('%A'),
+                            'date': slot_start.strftime('%Y-%m-%d'),
+                            'time': slot_start.strftime('%I:%M %p'),
+                            'duration_minutes': duration_minutes
+                        })
+                        
+                        # Limit to reasonable number of suggestions
+                        if len(available_slots) >= 5:
+                            break
+                
+                if len(available_slots) >= 5:
+                    break
+            
+            current_time += timedelta(days=1)
+        
+        return {
+            "status": "completed",
+            "message": f"Found {len(available_slots)} available time slots",
+            "available_slots": available_slots,
+            "my_events_count": len(my_events),
+            "others_events_count": len(others_events),
+            "total_conflicts": len(all_busy_times)
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to find available time: {str(e)}"
+        }
 # Demo data tool for generating realistic calendar event data
 @tool
 def generate_demo_calendar_data_tool(event_type: str, context: str = "") -> Dict[str, Any]:
@@ -368,35 +497,39 @@ class GoogleCalendarAgent(Agent):
     def __init__(self, id):
         self.id = id
         self.llm = LLMService.get_model()
-        self.tools = [create_calendar_event_tool, list_calendar_events_tool,get_others_time, generate_demo_calendar_data_tool]
+        self.tools = [create_calendar_event_tool, list_calendar_events_tool,get_others_time, generate_demo_calendar_data_tool,find_available_time_tool]
         self.tool_node = ToolNode(self.tools)
         self.graph = self._create_graph()
         
-    def root_instruction(self):
-        SYSTEM_INSTRUCTION = (
-            'You are a specialized assistant for Google Calendar management and negotiation support. '
-            "Your purpose is to help users create calendar events, list events, check availability, and support negotiation processes. "
-            "You can also get other users time to check for avaliability"
-            "You can auto-generate missing event details like descriptions, but NEVER generate dates/times without user input. "
-            "Always ensure event times are properly formatted and realistic. "
-            "For negotiation tasks, focus on availability checking, meeting coordination, and scheduling optimization."
-        )
-        
-        FORMAT_INSTRUCTION = (
-            'Analyze the user input and extract:\n'
-            '1. Event title (REQUIRED - auto-generate if missing)\n'
-            '2. Start date and time (REQUIRED - ask if missing)\n'
-            '3. End date and time (auto-generate if missing, default to 1 hour after start)\n'
-            '4. Description (auto-generate if missing)\n'
-            '5. Attendees (optional)\n'
-            '6. Location (optional)\n\n'
-            'If title, start time are missing, set status to "input_required".\n'
-            'If end time is missing, auto-generate it as 1 hour after start time.\n'
-            'Convert all times to ISO format (YYYY-MM-DDTHH:MM:SS).\n'
-            'Set status to "ready" if ready to create event, "list" if user wants to list events or check availability.'
-        )
-        
-        return f"{SYSTEM_INSTRUCTION}\n\n{FORMAT_INSTRUCTION}"
+        def root_instruction(self):
+            SYSTEM_INSTRUCTION = (
+                'You are a specialized assistant for Google Calendar management with advanced availability checking. '
+                "Your purpose is to help users create calendar events, list events, check availability, and find optimal meeting times. "
+                "You can check both the user's calendar and other attendees' calendars to find the best available time slots. "
+                "You can auto-generate missing event details like descriptions, but NEVER generate dates/times without user input or availability checking. "
+                "Always ensure event times are properly formatted and realistic. "
+                "For scheduling tasks, prioritize availability checking and suggest optimal meeting times."
+            )
+            
+            FORMAT_INSTRUCTION = (
+                'Analyze the user input and determine the action:\n'
+                '1. CREATE_EVENT: User wants to create a specific event with known details\n'
+                '2. FIND_TIME: User wants to find available time for a meeting (use when attendees are mentioned)\n'
+                '3. LIST_EVENTS: User wants to see existing events or check availability\n'
+                '4. CHECK_AVAILABILITY: User wants to check if specific times are available\n\n'
+                'For FIND_TIME requests:\n'
+                '- Extract attendees email addresses\n'
+                '- Determine meeting duration (default: 60 minutes)\n'
+                '- Identify preferred days/times if mentioned\n'
+                '- Set status to "find_time"\n\n'
+                'For CREATE_EVENT requests:\n'
+                '- Extract title, start_datetime, end_datetime, description, attendees, location\n'
+                '- If missing critical info, set status to "input_required"\n'
+                '- If ready, set status to "ready"\n\n'
+                'Convert all times to ISO format (YYYY-MM-DDTHH:MM:SS).'
+            )
+            
+            return f"{SYSTEM_INSTRUCTION}\n\n{FORMAT_INSTRUCTION}"
     
     def evaluation_instruction(self):
         SYSTEM_INSTRUCTION = (
@@ -439,7 +572,7 @@ class GoogleCalendarAgent(Agent):
         """Create the LangGraph workflow"""
         
         def analyze_request(state: CalendarState) -> CalendarState:
-            """Analyze the user request and extract calendar event components"""
+            """Analyze the user request and determine the appropriate action"""
             messages = state.get("messages", [])
             if not messages:
                 return {
@@ -450,166 +583,183 @@ class GoogleCalendarAgent(Agent):
             
             user_input = messages[-1].get("content", "")
             
-            # First, use LLM to determine the intent
-            intent_prompt = f"""
-            Analyze this calendar request and determine the primary intent:
+            # Use LLM to analyze the request
+            analysis_prompt = f"""
+            Analyze this calendar request and determine the intent and extract relevant information:
             
             Request: {user_input}
             
             Intent options:
-            - LIST_EVENTS: User wants to see calendar events, check availability, view upcoming events
-            - CREATE_EVENT: User wants to create/schedule a new event or meeting
-            - CHECK_AVAILABILITY: User wants to check if they're available at specific times
+            - FIND_TIME: User wants to schedule a meeting and needs to find available time (mentions attendees, scheduling, finding time)
+            - CREATE_EVENT: User wants to create a specific event with known details
+            - LIST_EVENTS: User wants to see calendar events or check general availability
+            - CHECK_AVAILABILITY: User wants to check if specific times are available
             
-            Respond with only: LIST_EVENTS, CREATE_EVENT, or CHECK_AVAILABILITY
+            Extract the following information:
+            - Intent: [FIND_TIME/CREATE_EVENT/LIST_EVENTS/CHECK_AVAILABILITY]
+            - Title: [event title or auto-generate]
+            - Duration: [in minutes, default 60]
+            - Attendees: [comma-separated emails or NONE]
+            - Preferred Days: [Monday,Tuesday,etc. or NONE]
+            - Preferred Hours: [9,10,11,14,15 or NONE]
+            - Start DateTime: [ISO format if specified or NONE]
+            - End DateTime: [ISO format if specified or NONE]
+            - Location: [location or NONE]
+            - Description: [description or auto-generate]
+            
+            Respond in this format:
+            INTENT: [intent]
+            TITLE: [title]
+            DURATION: [minutes]
+            ATTENDEES: [emails]
+            PREFERRED_DAYS: [days]
+            PREFERRED_HOURS: [hours]
+            START_DATETIME: [datetime]
+            END_DATETIME: [datetime]
+            LOCATION: [location]
+            DESCRIPTION: [description]
             """
             
             try:
-                intent_response = self.llm.invoke(intent_prompt)
-                intent_text = intent_response.content if hasattr(intent_response, 'content') else str(intent_response)
-                intent = intent_text.strip().upper()
+                response = self.llm.invoke(analysis_prompt)
+                response_text = response.content if hasattr(response, 'content') else str(response)
                 
-                # Handle list events and availability checks
-                if "LIST_EVENTS" in intent or "CHECK_AVAILABILITY" in intent:
+                # Parse the response
+                intent = self._extract_field(response_text, "INTENT")
+                title = self._extract_field(response_text, "TITLE")
+                duration = self._extract_field(response_text, "DURATION")
+                attendees_str = self._extract_field(response_text, "ATTENDEES")
+                preferred_days_str = self._extract_field(response_text, "PREFERRED_DAYS")
+                preferred_hours_str = self._extract_field(response_text, "PREFERRED_HOURS")
+                start_datetime = self._extract_field(response_text, "START_DATETIME")
+                end_datetime = self._extract_field(response_text, "END_DATETIME")
+                location = self._extract_field(response_text, "LOCATION")
+                description = self._extract_field(response_text, "DESCRIPTION")
+                
+                # Parse attendees
+                attendees = []
+                if attendees_str and attendees_str != "NONE":
+                    attendees = [email.strip() for email in attendees_str.split(',') if email.strip()]
+                
+                # Parse preferred days
+                preferred_days = []
+                if preferred_days_str and preferred_days_str != "NONE":
+                    preferred_days = [day.strip() for day in preferred_days_str.split(',') if day.strip()]
+                
+                # Parse preferred hours
+                preferred_hours = []
+                if preferred_hours_str and preferred_hours_str != "NONE":
+                    try:
+                        preferred_hours = [int(hour.strip()) for hour in preferred_hours_str.split(',') if hour.strip().isdigit()]
+                    except:
+                        preferred_hours = []
+                
+                # Parse duration
+                try:
+                    duration_minutes = int(duration) if duration.isdigit() else 60
+                except:
+                    duration_minutes = 60
+                
+                # Determine status based on intent
+                if intent == "FIND_TIME":
                     return {
                         **state,
-                        "status": "list_events",
-                        "error_message": ""
+                        "status": "find_time",
+                        "title": title if title != "NONE" else "Meeting",
+                        "attendees": attendees,
+                        "duration_minutes": duration_minutes,
+                        "preferred_days": preferred_days,
+                        "preferred_hours": preferred_hours,
+                        "location": location if location != "NONE" else "",
+                        "description": description if description != "NONE" else ""
                     }
-                
-                # Handle create event requests
-                if "CREATE_EVENT" in intent:
-                    # Use LLM to analyze and extract calendar event components
-                    prompt = f"""
-                    {self.root_instruction()}
-                    
-                    User request: {user_input}
-                    Current date and time: {datetime.now().isoformat()}
-                    
-                    Extract the following information for creating a calendar event:
-                    - title: event title (auto-generate if missing)
-                    - start_datetime: start date and time in ISO format YYYY-MM-DDTHH:MM:SS (REQUIRED)
-                    - end_datetime: end date and time in ISO format (auto-generate as 1 hour after start if missing)
-                    - description: event description (auto-generate if missing)
-                    - attendees: comma-separated email addresses (optional)
-                    - location: event location (optional)
-                    
-                    For negotiation tasks, focus on:
-                    - Meeting scheduling and coordination
-                    - Availability checking and comparison
-                    - Event creation with proper details
-                    
-                    Respond in this format:
-                    TITLE: [title or auto-generated title]
-                    START_DATETIME: [ISO datetime or MISSING]
-                    END_DATETIME: [ISO datetime or auto-generated]
-                    DESCRIPTION: [description or auto-generated]
-                    ATTENDEES: [email1,email2 or NONE]
-                    LOCATION: [location or NONE]
-                    STATUS: [input_required/ready/error]
-                    """
-                    
-                    response = self.llm.invoke(prompt)
-                    response_text = response.content if hasattr(response, 'content') else str(response)
-                    
-                    # Parse LLM response
-                    title = self._extract_field(response_text, "TITLE")
-                    start_datetime = self._extract_field(response_text, "START_DATETIME")
-                    end_datetime = self._extract_field(response_text, "END_DATETIME")
-                    description = self._extract_field(response_text, "DESCRIPTION")
-                    attendees_str = self._extract_field(response_text, "ATTENDEES")
-                    location = self._extract_field(response_text, "LOCATION")
-                    status = self._extract_field(response_text, "STATUS")
-                    
-                    # Check required fields
-                    missing_fields = []
-                    if title == "MISSING":
-                        missing_fields.append("event title")
-                    if start_datetime == "MISSING":
-                        missing_fields.append("start date and time")
-                    
-                    # If we have missing fields, use demo data tool to generate them
-                    if missing_fields:
-                        # Determine the type of event
-                        event_type = "meeting"  # default
-                        if "lunch" in user_input.lower():
-                            event_type = "lunch"
-                        elif "call" in user_input.lower() or "phone" in user_input.lower():
-                            event_type = "call"
-                        elif "review" in user_input.lower():
-                            event_type = "review"
-                        
-                        # Generate demo calendar data
-                        demo_result = generate_demo_calendar_data_tool.invoke({
-                            "event_type": event_type,
-                            "context": user_input
-                        })
-                        
-                        if demo_result["status"] == "completed":
-                            # Parse attendees properly
-                            demo_attendees = demo_result.get("attendees", [])
-                            if isinstance(demo_attendees, str):
-                                demo_attendees = [email.strip() for email in demo_attendees.split(',') if email.strip()]
-                            
-                            # Parse attendees from LLM response
-                            llm_attendees = []
-                            if attendees_str and attendees_str != "NONE":
-                                llm_attendees = [email.strip() for email in attendees_str.split(',') if email.strip()]
-                            
-                            return {
-                                **state,
-                                "title": title if title != "MISSING" else demo_result["title"],
-                                "start_datetime": start_datetime if start_datetime != "MISSING" else demo_result["start_datetime"],
-                                "end_datetime": end_datetime if end_datetime != "MISSING" else demo_result["end_datetime"],
-                                "description": description if description != "MISSING" else demo_result["description"],
-                                "attendees": llm_attendees if llm_attendees else demo_attendees,
-                                "location": location if location != "NONE" else demo_result["location"],
-                                "status": "ready"
-                            }
-                        else:
-                            return {
-                                **state,
-                                "status": "input_required",
-                                "error_message": f"Missing information: {', '.join(missing_fields)}"
-                            }
-                    
-                    # Parse attendees
-                    attendees = []
-                    if attendees_str and attendees_str != "NONE":
-                        attendees = [email.strip() for email in attendees_str.split(',') if email.strip()]
+                elif intent == "CREATE_EVENT":
+                    if start_datetime == "NONE":
+                        return {
+                            **state,
+                            "status": "input_required",
+                            "error_message": "Start date and time required for event creation"
+                        }
                     
                     # Auto-generate end time if missing
-                    if end_datetime == "MISSING" and start_datetime != "MISSING":
+                    if end_datetime == "NONE":
                         try:
                             start_dt = datetime.fromisoformat(start_datetime.replace('Z', ''))
-                            end_dt = start_dt + timedelta(hours=1)
+                            end_dt = start_dt + timedelta(minutes=duration_minutes)
                             end_datetime = end_dt.isoformat()
                         except:
-                            end_datetime = start_datetime  # Fallback
+                            end_datetime = start_datetime
                     
                     return {
                         **state,
-                        "title": title if title != "MISSING" else "Untitled Event",
+                        "status": "ready",
+                        "title": title if title != "NONE" else "Event",
                         "start_datetime": start_datetime,
                         "end_datetime": end_datetime,
-                        "description": description if description != "MISSING" else "",
                         "attendees": attendees,
                         "location": location if location != "NONE" else "",
-                        "status": "ready"
+                        "description": description if description != "NONE" else ""
                     }
-                
-                # Default to list events if intent is unclear
-                return {
-                    **state,
-                    "status": "list_events",
-                    "error_message": ""
-                }
-                
+                else:
+                    return {
+                        **state,
+                        "status": "list_events"
+                    }
+                    
             except Exception as e:
                 return {
                     **state,
                     "status": "error",
                     "error_message": f"Error analyzing request: {str(e)}"
+                }
+        def find_available_time_node(state: CalendarState) -> CalendarState:
+            """Find available time slots for the meeting"""
+            try:
+                # Get preferred parameters
+                duration = state.get("duration_minutes", 60)
+                preferred_days = state.get("preferred_days", [])
+                preferred_hours = state.get("preferred_hours", [])
+                attendees = state.get("attendees", [])
+                
+                # Find available times
+                result = find_available_time_tool.invoke({
+                    "duration_minutes": duration,
+                    "preferred_days": preferred_days,
+                    "preferred_hours": preferred_hours,
+                    "attendees": attendees
+                })
+                
+                if result["status"] == "completed":
+                    available_slots = result.get("available_slots", [])
+                    if available_slots:
+                        # Use the first available slot as the suggested time
+                        suggested_slot = available_slots[0]
+                        return {
+                            **state,
+                            "status": "time_found",
+                            "start_datetime": suggested_slot["start_datetime"],
+                            "end_datetime": suggested_slot["end_datetime"],
+                            "suggested_times": available_slots,
+                            "error_message": f"Found {len(available_slots)} available time slots. Suggested: {suggested_slot['day']} {suggested_slot['date']} at {suggested_slot['time']}"
+                        }
+                    else:
+                        return {
+                            **state,
+                            "status": "no_time_found",
+                            "error_message": "No available time slots found for the requested parameters"
+                        }
+                else:
+                    return {
+                        **state,
+                        "status": "error",
+                        "error_message": result.get("message", "Failed to find available time")
+                    }
+                    
+            except Exception as e:
+                return {
+                    **state,
+                    "status": "error",
+                    "error_message": f"Error finding available time: {str(e)}"
                 }
         
         def create_event_node(state: CalendarState) -> CalendarState:
