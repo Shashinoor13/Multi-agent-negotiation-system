@@ -1,13 +1,9 @@
-# index.py
 import os
-from typing import Any, Callable
 import mesop as me
 import mesop.labs as mel
 from fastapi import FastAPI
 from fastapi.middleware.wsgi import WSGIMiddleware
 
-# Assuming these imports are correctly set up in your project structure
-# Ensure these modules and their classes exist and are correctly implemented
 from agents.calendar_agent import GoogleCalendarAgent
 from agents.gmail_agent import GmailAgent
 from agents.search_agent import SearchAgent
@@ -16,78 +12,112 @@ from services.embedding_service import save_embeddings
 from services.llm_service import LLMService
 from strategy.simple import SimpleNegotiationStrategy
 
-
 app = FastAPI()
 
 @me.stateclass
 class State:
-    # This is the only state variable we need now for the negotiation log
     output_messages: list[str]
     is_negotiating: bool = False
     task:str
     input:str
     count = 0
 
-
 async def start_negotiation(e:me.ClickEvent):
     state = me.state(State)
-    state.output_messages = [] # Clear previous messages for a new run
+    state.output_messages = []  # Clear previous messages for a new run
     state.is_negotiating = True
     yield
-    # Mesop will automatically re-render here because state.is_negotiating changed.
-    
-    # Available agents (these would likely be initialized elsewhere in a real app)
-    # Ensure these agents are properly configured and callable
+
     gmail_agent = GmailAgent("gmail_agent_01")
     calendar_agent = GoogleCalendarAgent("calendar_agent_01")
     search_agent = SearchAgent("search_agent_01")
-
-
-
-    # save_embeddings([gmail_agent.generate_agent_card(), calendar_agent.generate_agent_card(), search_agent.generate_agent_card()])
-
-    # Available Strategies
     simple = SimpleNegotiationStrategy()
+    negotiation_environment = NegotiationEnvironment(
+        agents=[gmail_agent, calendar_agent, search_agent], strategy=simple
+    )
+    task = state.user_task
 
-    negotiation_environment = NegotiationEnvironment(agents=[gmail_agent, calendar_agent, search_agent], strategy=simple)
-    
-
-    
-    s = me.state(State)
-    # task = "Plan a meeting with Rista next week, her email is ristashrestha10@gmail.com"
-    task  = s.task
-    print(task)
-    # Iterate through the yielded messages from set_task
     for message in negotiation_environment.set_task(task=task):
-        # print(message)
         state.output_messages.append(message)
         yield
-        state.count =+1
-        # Mesop will automatically re-render because state.output_messages changed.
+        state.count += 1
 
-    # Iterate through the yielded messages from negotiate
     for message in negotiation_environment.negotiate():
-        if isinstance(message, dict): # Check if the last yielded item is the results dict
-            state.output_messages.append(f"\nFinal Results: {message}")
+        if isinstance(message, dict):
+            state.output_messages.append(f"[Final Results] {message}")
             yield
         else:
             state.output_messages.append(message)
             yield
-        # Mesop will automatically re-render because state.output_messages changed.
-    
+
     state.is_negotiating = False
     yield
-    # Mesop will automatically re-render here because state.is_negotiating changed.
 
+def parse_step(message: str):
+    """Parse step/phase and agent from message. Expects format: [Step][Agent] message"""
+    step = ""
+    agent = ""
+    msg = message
+    if message.startswith("["):
+        end_step = message.find("]")
+        if end_step != -1:
+            step = message[1:end_step]
+            rest = message[end_step+1:].lstrip()
+            if rest.startswith("["):
+                end_agent = rest.find("]")
+                if end_agent != -1:
+                    agent = rest[1:end_agent]
+                    msg = rest[end_agent+1:].lstrip()
+                else:
+                    msg = rest
+            else:
+                msg = rest
+    return step, agent, msg
 
-async def handleSubmit(e: me.TextareaShortcutEvent):
+@me.component
+def negotiation_bubble(message: str, agent: str = "", step: str = "", is_final: bool = False):
+    """Styled chat bubble for negotiation messages, with agent and step label."""
+    with me.box(
+        style=me.Style(
+            display='flex',
+            flex_direction='column',
+            align_items='flex-start',
+            width="100%",
+        )
+    ):
+        label = ""
+        if step:
+            label += f"{step} "
+        if agent:
+            label += f"({agent})"
+        if label:
+            me.text(
+                label,
+                style=me.Style(
+                    font_size="0.95em",
+                    font_weight="bold",
+                    color="#0ea5e9",  # Blue for step/agent label
+
+                )
+            )
+        with me.box(
+            style=me.Style(
+                background="#f3f4f6" if not is_final else "#dbeafe",  # Light bubble, blue for final
+                color="#18181b",
+                border_radius=12,
+                margin=me.Margin(top=4, bottom=4,left=4),
+                padding=me.Padding(top=2, bottom=2, left=16, right=16),
+                max_width='90%',
+                width="fit-content",
+            )
+        ):
+            me.markdown(message, style=me.Style(font_family='monospace', font_size='1em'))
+
+def on_blur(e: me.InputBlurEvent):
     state = me.state(State)
-    state.task = e.value
-    start_negotiation(me.ClickEvent)
-
+    state.user_task = e.value
 
 @me.page(
-    # Security policy is less critical if no external scripts, but harmless to keep
     security_policy=me.SecurityPolicy(
         allowed_script_srcs=[
             "https://cdn.jsdelivr.net",
@@ -96,52 +126,65 @@ async def handleSubmit(e: me.TextareaShortcutEvent):
 )
 def negotiation_page():
     state = me.state(State)
-    
+
     with me.box(style=me.Style(
         padding=me.Padding.all(20),
-        # max_width=me.Length(800), # Keeping max_width for better readability on large screens
-        margin=me.Margin.symmetric(horizontal="auto")
+        margin=me.Margin.symmetric(horizontal="auto"),
+        max_width="100%",
+        background="#f8fafc",  # Lighter background for better contrast
+        border_radius=12,
+        box_shadow='0 2px 8px rgba(0,0,0,0.10)',
+        min_height="100vh"
     )):
-        s = me.state(State)
-        me.text("# Agent Negotiation Environment", style=me.Style(font_weight="bold", font_size="2em")) # Increased font size
-        me.text("Click the button to start the multi-agent negotiation process for task assignment.")
-        me.textarea(
-            label="Enter the task you want to perform",
-            value=s.input,
-            shortcuts={
-                me.Shortcut(key="enter"):handleSubmit,
-            },
-            appearance="outline",
-            style=me.Style(width="100%"),
+        me.text("Agent Negotiation Environment", style=me.Style(font_weight="bold", font_size="2em", color="#18181b"))
+        me.text(
+            "Enter a task and start the multi-agent negotiation process",
+            style=me.Style(color="#334155", margin=me.Margin(bottom=2))
         )
-        me.button(
-            "Start Negotiation", 
-            on_click=start_negotiation, 
-            type="flat",
-            disabled=state.is_negotiating,
-            style=me.Style(margin=me.Margin.symmetric(vertical=20), font_size="1.2em", padding=me.Padding.all(10)) # Styled button
-        )
-        
+
+        with me.box(style=me.Style(min_width="100vw",display="flex", flex_direction="row", gap=8, margin=me.Margin(bottom=18))):
+            me.input(
+                value=state.user_task,
+                label="Task",
+                on_blur=on_blur,
+                style=me.Style(min_width="85vw", background="#fff", color="#18181b")
+            )
+            me.button(
+                "Send",
+                on_click=start_negotiation,
+                disabled=state.is_negotiating,
+                style=me.Style(
+                    font_size="1.1em",
+                    padding=me.Padding(top=8, bottom=8, left=18, right=18),
+                    background="#0ea5e9",
+                    color="#fff",
+                    min_width="100px",
+                    border_radius=8,
+                    box_shadow='0 1px 3px rgba(0,0,0,0.10)'
+                )
+            )
+
         if state.is_negotiating:
-            me.text("Negotiation in progress...", style=me.Style(color="orange", font_weight="bold"))
-        
+            me.text("Negotiation in progress...", style=me.Style(color="#fbbf24", font_weight="bold", margin=me.Margin(bottom=2)))
+
         if state.output_messages:
             me.divider()
-            me.text("## Negotiation Log", style=me.Style(font_weight="bold", margin=me.Margin(bottom=10), font_size="1.5em"))
+            me.text("Negotiation Log", style=me.Style(font_weight="bold", font_size="1.3em", color="#18181b"))
             with me.box(style=me.Style(
-                background="lightgray",
-                padding=me.Padding.all(10),
-                # border_radius=me.BorderRadius.all(5),
-                # height=me.Length(600), # Increased fixed height for more log content
-                overflow_y="auto" # Enable scrolling
+                background="#e5e7eb",
+                border_radius=8,
+                height="100%",
+                overflow_y="auto",
+                box_shadow='0 1px 3px rgba(0,0,0,0.08)'
             )):
-                for message in state.output_messages:
-                    # Using me.markdown for potential richer text formatting if needed in future
-                    me.text(message, style=me.Style(font_family="monospace", white_space="pre-wrap")) # pre-wrap for preserving newlines
-        
-# Removed increment, Value, on_value, web_component functions and their imports
-# as they are no longer needed.
-
+                for idx, message in enumerate(state.output_messages):
+                    step, agent, msg = parse_step(message)
+                    negotiation_bubble(
+                        msg,
+                        agent=agent,
+                        step=step,
+                        is_final=step.lower() == "final results"
+                    )
 
 app.mount(
     "/",

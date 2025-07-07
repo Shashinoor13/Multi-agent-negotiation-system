@@ -27,7 +27,6 @@ class NegotiationEnvironment:
         from services.llm_service import LLMService
 
         yield f"\n🎯 Original Task: {task}"
-        yield "=" * 80
         
         llm = LLMService()
         raw_llm_response=llm.split_task(task=task)
@@ -35,15 +34,19 @@ class NegotiationEnvironment:
         parsed_result = llm.parse_output(raw_llm_response)
         
         if parsed_result["status"] == "success":
-            tasks = parsed_result["tasks"] 
-            yield "✅ Tasks successfully split and parsed"
-            yield f"📊 Total subtasks created: {len(tasks)}"
-            yield "-" * 60
-            
+            tasks = parsed_result["tasks"]
+            # Collect all lines in a list
+            lines = [
+                f"✅ Tasks successfully split and parsed",
+                f"📊 Total subtasks created: {len(tasks)}",
+                ""
+            ]
             for task_item in tasks:
-                yield f"📋 Subtask {task_item['id']}: {task_item['subtask']}"
-                self.tasks.append(Task(task_item['id'],task_item['subtask']))
-            yield "-" * 60
+                lines.append(f"📋 Subtask {task_item['id']}: {task_item['subtask']}")
+                self.tasks.append(Task(task_item['id'], task_item['subtask']))
+            # Join with double newlines for extra space between lines
+            yield "\n\n".join(lines)
+            
         else:
             yield f"❌ Error splitting or parsing task: {parsed_result['message']}"
             yield f"Raw response: {parsed_result.get('raw_response', 'N/A')}"
@@ -270,7 +273,7 @@ class NegotiationEnvironment:
             else:
                 yield f"   ❌ Failed to create assignment for Task {task_id} → Agent {agent_id}"
         
-        yield "-" * 60
+
         yield f"✅ Initial distribution complete: {len(self.taskAssignments)} assignments created"
 
     def _agent_card_to_text(self, agent_card):
@@ -616,3 +619,5 @@ class NegotiationEnvironment:
             'optimizations_applied': len(accepted_changes) if 'accepted_changes' in locals() else 0,
             'results': results
         }
+
+
