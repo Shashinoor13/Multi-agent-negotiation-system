@@ -59,8 +59,7 @@ class LLMService:
         system_prompt = """
     You are a multi-agent task planner. Your job is to take a complex task and decompose it into smaller subtasks that can be assigned to different intelligent agents. Each agent has specific capabilities and responsibilities.
     Your output must be a structured breakdown of the task, assigning specific subtasks to the relevant agents. Think step-by-step and ensure subtasks are clear, actionable, and aligned with each agent's capabilities.
-    DO NOT RETURN MORE THAN 4 SUBTASKS AT A TIME.
-    DO NOT GENERATE EMAIL ADDRESSES OR RECIPIENT NAMES.
+    DO NOT RETURN MORE THAN 6 SUBTASKS AT A TIME.
     """
         examples = [
             {
@@ -97,8 +96,6 @@ class LLMService:
 
         return response
 
-        
-    
     def select_agents_according_to_task(self, agents: list[Agent], tasks: list[Task]):
         try:
             # Step 1: Gather agent profiles
@@ -154,7 +151,23 @@ class LLMService:
                 "message": f"Failed to assign agents: {str(e)}"
             }
 
-    
+    def _safe_json_loads(self, json_str):
+        """
+        Try to parse JSON, fixing common LLM formatting issues (single quotes, trailing commas).
+        """
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            # Try to fix single quotes and trailing commas
+            fixed = json_str
+            # Replace single quotes with double quotes
+            fixed = re.sub(r"'", '"', fixed)
+            # Remove trailing commas before closing brackets/braces
+            fixed = re.sub(r",(\s*[\]}])", r"\1", fixed)
+            # Remove newlines between array/dict elements
+            fixed = re.sub(r"\n", " ", fixed)
+            return json.loads(fixed)
+
     def parse_output(self, response):
         """Parse the LLM response and extract structured task breakdown"""
         try:
@@ -167,10 +180,6 @@ class LLMService:
                 response_text = str(response)
             
             # Find JSON content in the response (handle markdown code blocks)
-            import json
-            import re
-            
-            # Look for JSON in markdown code blocks
             json_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response_text, re.DOTALL)
             if json_match:
                 json_str = json_match.group(1)
@@ -182,8 +191,8 @@ class LLMService:
                 else:
                     raise ValueError("No JSON content found in response")
             
-            # Parse the JSON
-            tasks = json.loads(json_str)
+            # Parse the JSON safely
+            tasks = self._safe_json_loads(json_str)
             
             # Format the output nicely
             formatted_tasks = []
@@ -227,7 +236,7 @@ class LLMService:
                 raise ValueError("No JSON array found in response")
 
             json_str = json_match.group(1)
-            assignments = json.loads(json_str)
+            assignments = self._safe_json_loads(json_str)
 
             return {
                 "status": "success",

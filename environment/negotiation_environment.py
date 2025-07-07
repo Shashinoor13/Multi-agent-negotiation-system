@@ -154,11 +154,9 @@ class NegotiationEnvironment:
         yield from self.distribute_task() # Use yield from for nested generator
         
         yield f"\n🚀 Starting negotiation with {len(self.taskAssignments)} task assignments"
-        yield "=" * 80
         
         # Phase 1: Initial evaluation and capability assessment
         yield "\n🔍 Phase 1: Agent Capability Assessment"
-        yield "-" * 50
         
         task_evaluations = {}
         agent_capabilities = {}
@@ -186,12 +184,11 @@ class NegotiationEnvironment:
                 'requirements': evaluation.get('requirements', [])
             })
             
-            yield f"🤖 Agent {agent.id} evaluated Task {task.id}: " \
-                  f"Confidence: {evaluation.get('confidence', 'N/A')}"
+            yield f"""🤖 Agent {agent.id} evaluated Task {task.id}: \n
+                  "Confidence: {evaluation.get('confidence', 'N/A')}"""
         
         # Phase 2: Cross-agent evaluation for optimization
         yield f"\n🔄 Phase 2: Cross-Agent Evaluation & Negotiation"
-        yield "-" * 50
         
         # Let each agent evaluate tasks assigned to other agents
         optimization_suggestions = []
@@ -201,8 +198,8 @@ class NegotiationEnvironment:
             task_desc = task_info['task'].task
             current_confidence = task_info['evaluation'].get('confidence', 0.5)
             
-            yield f"\n📋 Evaluating Task {task_id}: '{task_desc}'"
-            yield f"   Current assignee: Agent {current_agent} (confidence: {current_confidence})"
+            yield f"""\n📋 Evaluating Task {task_id}: '{task_desc}'\n
+           Current assignee: Agent {current_agent} (confidence: {current_confidence})"""
             
             # Other agents evaluate this task
             better_alternatives = []
@@ -212,7 +209,7 @@ class NegotiationEnvironment:
                     alt_evaluation = other_agent.evaluate(task_desc)
                     alt_confidence = alt_evaluation.get('confidence', 0.0)
                     
-                    yield f"   🔍 Agent {other_agent.id} evaluation: confidence {alt_confidence}"
+                    yield f"  🔍 Agent {other_agent.id} evaluation: confidence {alt_confidence}"
                     
                     # More flexible improvement criteria
                     improvement_threshold = 0.1  # Reduced from 0.2 to 0.1 (10% improvement)
@@ -266,9 +263,9 @@ class NegotiationEnvironment:
                     'suggested_confidence': best_alternative['confidence']
                 })
                 
-                yield f"   💡 Suggestion: Reassign to Agent {best_alternative['agent_id']}"
-                yield f"      Confidence: {current_confidence:.2f} → {best_alternative['confidence']:.2f}"
-                yield f"      Improvement: +{best_alternative['improvement']:.2f} ({best_alternative['reason']})"
+                yield f"""💡 Suggestion: Reassign to Agent {best_alternative['agent_id']}\n
+                 Confidence: {current_confidence:.2f} → {best_alternative['confidence']:.2f}\n
+        Improvement: +{best_alternative['improvement']:.2f} ({best_alternative['reason']})"""
                 
                 # Show other good alternatives too
                 if len(better_alternatives) > 1:
@@ -277,8 +274,8 @@ class NegotiationEnvironment:
                         yield f"        - Agent {alt['agent_id']}: {alt['confidence']:.2f} (+{alt['improvement']:.2f})"
             else:
                 # Even if no better alternatives, show all agent evaluations for transparency
-                yield f"   ✅ Current assignment appears optimal"
-                yield f"      All agent evaluations:"
+                yield f"✅ Current assignment appears optimal"
+                yield "All agent evaluations:"
                 for other_assignment in self.taskAssignments:
                     other_agent = other_assignment.agent
                     if other_agent.id != current_agent:
@@ -286,7 +283,7 @@ class NegotiationEnvironment:
                         alt_confidence = alt_evaluation.get('confidence', 0.0)
                         diff = alt_confidence - current_confidence
                         status = "✅ Better" if diff > 0 else "❌ Worse" if diff < 0 else "🟡 Equal"
-                        yield f"        - Agent {other_agent.id}: {alt_confidence:.2f} ({diff:+.2f}) {status}"
+                        yield f"  - Agent {other_agent.id}: {alt_confidence:.2f} ({diff:+.2f}) {status}"
                 
                 # Still suggest alternatives if they're close (within 5%)
                 close_alternatives = []
@@ -307,12 +304,12 @@ class NegotiationEnvironment:
                 if close_alternatives:
                     yield f"      💡 Close alternatives (within 5%):"
                     for alt in close_alternatives:
-                        yield f"        - Agent {alt['agent_id']}: {alt['confidence']:.2f} ({alt['difference']:+.2f})"
-                        yield f"          Consider this agent as an alternative option"
+                        yield f""" - Agent {alt['agent_id']}: {alt['confidence']:.2f} ({alt['difference']:+.2f})\n
+                         Consider this agent as an alternative option"""
         
         # Phase 3: Negotiation and consensus
         yield f"\n🤝 Phase 3: Agent Negotiation & Consensus"
-        yield "-" * 50
+
         
         if optimization_suggestions:
             yield f"Found {len(optimization_suggestions)} optimization opportunities:"
@@ -320,10 +317,10 @@ class NegotiationEnvironment:
             # Simulate negotiation process with more sophisticated logic
             accepted_changes = []
             for suggestion in optimization_suggestions:
-                yield f"\n🎯 Negotiating Task {suggestion['task_id']} reassignment:"
-                yield f"   From: Agent {suggestion['current_agent']} (confidence: {suggestion['current_confidence']:.2f})"
-                yield f"   To: Agent {suggestion['suggested_agent']} (confidence: {suggestion['suggested_confidence']:.2f})"
-                yield f"   Reason: {suggestion['reason']}"
+                yield f"""\n🎯 Negotiating Task {suggestion['task_id']} reassignment:\n
+                  From: Agent {suggestion['current_agent']} (confidence: {suggestion['current_confidence']:.2f})\n
+                  To: Agent {suggestion['suggested_agent']} (confidence: {suggestion['suggested_confidence']:.2f})\n
+                  Reason: {suggestion['reason']}"""
                 
                 # Find the agents involved
                 current_agent = None
@@ -345,8 +342,8 @@ class NegotiationEnvironment:
                     suggested_response = suggested_agent.evaluate(f"Take on additional task {suggestion['task_id']}")
                     suggested_willingness = suggested_response.get('confidence', 0.7)
                     
-                    yield f"   🤖 Agent {suggestion['current_agent']} willingness to release: {current_willingness:.2f}"
-                    yield f"   🤖 Agent {suggestion['suggested_agent']} willingness to accept: {suggested_willingness:.2f}"
+                    yield f"""🤖 Agent {suggestion['current_agent']} willingness to release: {current_willingness:.2f}\n
+ 🤖 Agent {suggestion['suggested_agent']} willingness to accept: {suggested_willingness:.2f}"""
                     
                     # More flexible acceptance criteria
                     # Accept if:
@@ -373,11 +370,11 @@ class NegotiationEnvironment:
                     
                     if accept_change:
                         accepted_changes.append(suggestion)
-                        yield f"   ✅ Agreement reached! {accept_reason}"
-                        yield f"   🔄 Task will be reassigned."
+                        yield f"""✅ Agreement reached! {accept_reason}\n
+ 🔄 Task will be reassigned."""
                     else:
-                        yield f"   ❌ No consensus reached. Task remains with current agent."
-                        yield f"      Reason: Current willingness {current_willingness:.2f}, Suggested willingness {suggested_willingness:.2f}"
+                        yield f""" ❌ No consensus reached. Task remains with current agent.\n
+       Reason: Current willingness {current_willingness:.2f}, Suggested willingness {suggested_willingness:.2f}"""
             
             # Apply accepted changes
             if accepted_changes:
@@ -399,14 +396,12 @@ class NegotiationEnvironment:
         
         # Phase 4: Collaborative execution
         yield f"\n🚀 Phase 4: Collaborative Task Execution"
-        yield "=" * 80
         
         def execute_task_assignment(task_assignment, message_queue):
             try:
                 message_queue.append(f"\n📋 Executing Task {task_assignment.task.id}:")
                 message_queue.append(f"🤖 Agent: {task_assignment.agent.id}")
                 message_queue.append(f"📝 Task: {task_assignment.task.task}")
-                message_queue.append("-" * 60)
                 
                 # Pre-execution evaluation for final check
                 pre_eval = task_assignment.agent.evaluate(task_assignment.task.task)
@@ -423,12 +418,10 @@ class NegotiationEnvironment:
                 else:
                     message_queue.append(f"❌ Error: {result.get('message', 'Task failed')}")
                 
-                message_queue.append("-" * 60)
                 return result
                 
             except Exception as e:
                 message_queue.append(f"❌ Exception during task execution: {str(e)}")
-                message_queue.append("-" * 60)
                 return {'status': 'error', 'message': str(e)}
         
         # Execute tasks with improved assignments
@@ -453,7 +446,6 @@ class NegotiationEnvironment:
 
         # Phase 5: Post-execution analysis
         yield f"\n📊 Phase 5: Negotiation Results Analysis"
-        yield "-" * 50
         
         successful_tasks = sum(1 for r in results if r and r.get('status') == 'completed')
         total_tasks = len(self.taskAssignments)
@@ -463,7 +455,6 @@ class NegotiationEnvironment:
         yield f"💡 Suggestions Generated: {len(optimization_suggestions) if 'optimization_suggestions' in locals() else 0}"
         
         yield f"\n🎯 Negotiation completed with agent collaboration!"
-        yield "=" * 80
         
         # Return the final result dictionary (optional, but good for structured output)
         yield {
