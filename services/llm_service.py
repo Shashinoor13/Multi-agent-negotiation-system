@@ -240,6 +240,11 @@ class LLMService:
                 "raw_response": str(response)
             }
 
+    def generate_embeddings(self,text):
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer("bert-base-nli-mean-tokens")
+        return model.encode(text).tolist()
+
 
     def split_and_parse_task(self, task):
         """Split a task and parse the response in one step"""
@@ -340,7 +345,6 @@ Complete the prompt by filling in missing fields:"""
 
 class ModelResponse:
     """Response wrapper to provide consistent interface"""
-    
     def __init__(self, content: str):
         self.content = content
     

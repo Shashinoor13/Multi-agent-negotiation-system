@@ -12,6 +12,8 @@ from agents.calendar_agent import GoogleCalendarAgent
 from agents.gmail_agent import GmailAgent
 from agents.search_agent import SearchAgent
 from environment.negotiation_environment import NegotiationEnvironment
+from services.embedding_service import save_embeddings
+from services.llm_service import LLMService
 from strategy.simple import SimpleNegotiationStrategy
 
 
@@ -22,9 +24,12 @@ class State:
     # This is the only state variable we need now for the negotiation log
     output_messages: list[str]
     is_negotiating: bool = False
+    task:str
+    input:str
     count = 0
 
-async def start_negotiation(event: me.ClickEvent):
+
+async def start_negotiation(e:me.ClickEvent):
     state = me.state(State)
     state.output_messages = [] # Clear previous messages for a new run
     state.is_negotiating = True
@@ -37,13 +42,21 @@ async def start_negotiation(event: me.ClickEvent):
     calendar_agent = GoogleCalendarAgent("calendar_agent_01")
     search_agent = SearchAgent("search_agent_01")
 
+
+
+    # save_embeddings([gmail_agent.generate_agent_card(), calendar_agent.generate_agent_card(), search_agent.generate_agent_card()])
+
     # Available Strategies
     simple = SimpleNegotiationStrategy()
 
     negotiation_environment = NegotiationEnvironment(agents=[gmail_agent, calendar_agent, search_agent], strategy=simple)
     
-    task = "Plan a meeting with Rista next week, his email is ristashrestha10@gmail.com"
 
+    
+    s = me.state(State)
+    # task = "Plan a meeting with Rista next week, her email is ristashrestha10@gmail.com"
+    task  = s.task
+    print(task)
     # Iterate through the yielded messages from set_task
     for message in negotiation_environment.set_task(task=task):
         # print(message)
@@ -67,6 +80,11 @@ async def start_negotiation(event: me.ClickEvent):
     # Mesop will automatically re-render here because state.is_negotiating changed.
 
 
+async def handleSubmit(e: me.TextareaShortcutEvent):
+    state = me.state(State)
+    state.task = e.value
+    start_negotiation(me.ClickEvent)
+
 
 @me.page(
     # Security policy is less critical if no external scripts, but harmless to keep
@@ -84,9 +102,18 @@ def negotiation_page():
         # max_width=me.Length(800), # Keeping max_width for better readability on large screens
         margin=me.Margin.symmetric(horizontal="auto")
     )):
+        s = me.state(State)
         me.text("# Agent Negotiation Environment", style=me.Style(font_weight="bold", font_size="2em")) # Increased font size
         me.text("Click the button to start the multi-agent negotiation process for task assignment.")
-        
+        me.textarea(
+            label="Enter the task you want to perform",
+            value=s.input,
+            shortcuts={
+                me.Shortcut(key="enter"):handleSubmit,
+            },
+            appearance="outline",
+            style=me.Style(width="100%"),
+        )
         me.button(
             "Start Negotiation", 
             on_click=start_negotiation, 
