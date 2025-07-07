@@ -240,29 +240,32 @@ class GmailAgent(Agent):
     def root_instruction(self):
         SYSTEM_INSTRUCTION = (
             'You are a specialized assistant for email management and negotiation support. '
-            "Your purpose is to help users send emails by extracting recipient's email address, "
-            "email subject, and email body from their requests. "
-            "You can auto-generate missing subject lines and body content, but NEVER generate recipient email addresses. "
-            "If recipient is missing, indicate that recipient information is required. "
-            "For processing tasks (receive, process, handle, manage), use demo data to simulate the activity. "
-            "For negotiation tasks, focus on professional communication, meeting coordination, and follow-up emails."
+            "Your primary purpose is to help users send emails by accurately extracting the recipient's email address, "
+            "the email subject, and the email body from their requests. "
+            "You MUST auto-generate missing subject lines and body content if not explicitly provided, "
+            "but you MUST NEVER generate or guess recipient email addresses. "
+            "If the recipient email is missing, you must clearly indicate that recipient information is required. "
+            "For tasks that involve simulating receiving or processing emails (e.g., 'simulate receiving a meeting proposal'), "
+            "use the generate_demo_email_data_tool to create a realistic, but not actual, email scenario. "
+            "For actual email sending, ensure all details (recipient, subject, body) are as accurate as possible from the user's request, "
+            "or intelligently auto-generated if missing. "
             "Reply as a professional email assistant, ensuring all communication is clear and concise. "
-            "Use the provided tools to send emails and generate demo data when necessary."
             "Always ensure the recipient's email address is valid and formatted correctly. "
-            "If the user input is incomplete, auto-generate appropriate content for subject and body, "
-            "but do not generate or guess the recipient's email address. "
-            "use SHASHINOOR GHIMIRE as your name in the email body and signature. "
+            "Use 'Shashinoor Ghimire' as your name in the email body and signature."
         )
         
         FORMAT_INSTRUCTION = (
-            'Analyze the user input and extract:\n'
-            '1. Recipient email address (REQUIRED - do not generate)\n'
-            '2. Email subject (auto-generate if missing)\n'
-            '3. Email body content (auto-generate if missing)\n\n'
-            'If recipient is missing, set status to "input_required".\n'
-            'If subject or body are missing, auto-generate appropriate content.\n'
-            'If all information is present and valid, use the send_email_tool to send the email.\n'
-            'Set status to "error" if there are any errors, "ready" if ready to send.'
+            'Analyze the user input and extract the following, providing clear, actionable content:\n'
+            '1. Recipient email address (e.g., ristashrestha10@gmail.com). If not found and not a demo request, state MISSING.\n'
+            '2. Email subject (e.g., Meeting Request). If missing, generate a concise, relevant subject.\n'
+            '3. Email body content (detailed, not just greetings). If missing, generate comprehensive content relevant to the request.\n'
+            '4. Determine if the request is for sending an email or for generating demo data (e.g., simulating a received email).\n\n'
+            'Respond in this format:\n'
+            'REQUEST_TYPE: [SEND_EMAIL/GENERATE_DEMO]\n'
+            'RECIPIENT: [email or MISSING or recipient name for demo]\n'
+            'SUBJECT: [subject or auto-generated subject]\n'
+            'BODY: [body or auto-generated body]\n'
+            'STATUS: [input_required/ready_to_send/generate_demo/error]'
         )
         
         return f"{SYSTEM_INSTRUCTION}\n\n{FORMAT_INSTRUCTION}"
@@ -494,7 +497,7 @@ class GmailAgent(Agent):
         # Note: subject and body are auto-generated, so we don't consider them missing
         return missing
     
-    def evaluate(self, task_description: str = None):
+    def evaluate(self, task_description: str = None,context: List[str] = []):
         """
         Evaluate a task and return confidence score and other metrics using LLM.
         
@@ -530,7 +533,7 @@ class GmailAgent(Agent):
         - generate_demo_email_data_tool: Creates realistic email content for testing
         
         Task Description: {task_description}
-        
+        Context: {context}
         Evaluate this task for the Gmail Agent and provide:
         1. Confidence score (0.0 to 1.0) - how confident the agent can complete this task
         2. Estimated time to complete
@@ -615,10 +618,10 @@ class GmailAgent(Agent):
             "status": "active"
         }
     
-    def run(self, user_input: str = None,messages:list[str]=[]):
+    def run(self, user_input: str = None,context:list[str]=[]):
         """Main entry point for the agent"""
         if user_input:
-            return self.execute(user_input,messages)
+            return self.execute(user_input,context)
         else:
             return {
                 "status": "input_required",

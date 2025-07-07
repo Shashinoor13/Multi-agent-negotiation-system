@@ -35,7 +35,7 @@ class LLMService:
             genai.configure(api_key=api_key)
             
             # Initialize the model
-            model_name = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+            model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
             
             generation_config = GenerationConfig(
                 temperature=0.7,

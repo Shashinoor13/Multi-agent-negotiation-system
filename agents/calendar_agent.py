@@ -973,7 +973,7 @@ class GoogleCalendarAgent(Agent):
             missing.append("start_datetime")
         return missing
     
-    def evaluate(self, task_description: str = None):
+    def evaluate(self, task_description: str = None,context: List[str] = []):
         """
         Evaluate a task and return confidence score and other metrics using LLM.
         
@@ -1011,6 +1011,7 @@ class GoogleCalendarAgent(Agent):
         - generate_demo_calendar_data_tool: Creates realistic calendar data for testing
         
         Task Description: {task_description}
+        Context: {context}
         
         Evaluate this task for the Calendar Agent and provide:
         1. Confidence score (0.0 to 1.0) - how confident the agent can complete this task
@@ -1096,10 +1097,10 @@ class GoogleCalendarAgent(Agent):
             "status": "active"
         }
     
-    def run(self, user_input: str = None,messages:list[str]=[]):
+    def run(self, user_input: str = None,context:list[str]=[]):
         """Main entry point for the agent"""
         if user_input:
-            return self.execute(user_input,messages)
+            return self.execute(user_input,context)
         else:
             return {
                 "status": "input_required",

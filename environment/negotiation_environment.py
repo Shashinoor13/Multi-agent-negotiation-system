@@ -22,15 +22,22 @@ class NegotiationEnvironment:
         self.tasks:list[Task] = []
         self.taskAssignments:list[TaskAssignment]=[]
         self.max_rounds = max_rounds
+        self.context_messages = []
+
+    def record_context(self, message):
+        """Record context messages for agents to use in evaluations"""
+        self.context_messages.append(message)
+        return message
     
     def set_task(self, task):
         from services.llm_service import LLMService
 
-        yield f"\n🎯 Original Task: {task}"
+        yield self.record_context(f"\n🎯 Original Task: {task}")
         
         llm = LLMService()
         raw_llm_response=llm.split_task(task=task)
         
+        # self.record_context(f"LLM Raw Response: {raw_llm_response}")
         parsed_result = llm.parse_output(raw_llm_response)
         
         if parsed_result["status"] == "success":
@@ -145,14 +152,12 @@ class NegotiationEnvironment:
     def distribute_task(self):
         """Distribute tasks to agents using similarity search with embeddings"""
         yield "🔄 Phase 0: Initial Task Distribution with Similarity Search"
-        yield "-" * 60
         from services.llm_service import LLMService
         
         # Initialize LLM service for embeddings
         llm = LLMService()
         
         # Generate embeddings for all agents
-        yield "🔍 Generating agent embeddings..."
         agent_embeddings = []
         agent_cards = []
         
@@ -164,7 +169,7 @@ class NegotiationEnvironment:
             agent_text = self._agent_card_to_text(agent_card)
             embedding = llm.generate_embeddings(agent_text)
             agent_embeddings.append(embedding)
-            yield f"   ✅ Generated embedding for Agent {agent.id}"
+        
         import faiss
         import numpy as np
         # Stack embeddings and create Faiss index
@@ -172,12 +177,12 @@ class NegotiationEnvironment:
         agent_index = faiss.IndexFlatL2(all_agent_embeddings.shape[1])
         agent_index.add(all_agent_embeddings)
         
-        yield f"📊 Created Faiss index with {len(agent_embeddings)} agent embeddings"
+        yield f"📊 ✅ Generated embedding for Agents and Created Faiss index with {len(agent_embeddings)} agent embeddings"
         
         # Generate embeddings for all tasks and find best matches
         yield "\n🎯 Finding optimal task-agent matches using similarity search..."
         task_similarities = {}
-        
+        lines = []
         for task in self.tasks:
             task_text = task.task
             task_embedding = llm.generate_embeddings(task_text)
@@ -199,14 +204,18 @@ class NegotiationEnvironment:
                     'distance': distance,
                     'rank': i + 1
                 })
-                yield f"   Task {task.id} → Agent {agent.id}: similarity {similarity:.3f} (rank {i+1})"
+                lines.append(f"   Task {task.id} → Agent {agent.id}: similarity {similarity:.3f} (rank {i+1})")
+                lines.append("\n")
         
+        yield "\n".join(lines)
+
         # Find optimal assignments using greedy approach based on similarity
         yield "\n🎯 Finding optimal initial assignments..."
         optimal_assignments = []
         used_agents = set()
         
         # Sort tasks by their best similarity score (highest first)
+        assignment_lines = []
         task_priority = []
         for task_id, similarities in task_similarities.items():
             best_similarity = max(sim['similarity'] for sim in similarities)
@@ -238,7 +247,8 @@ class NegotiationEnvironment:
                     'similarity': best_similarity
                 })
                 used_agents.add(best_agent.id)
-                yield f"   ✅ Task {task_id} → Agent {best_agent.id} (similarity: {best_similarity:.3f})"
+                assignment_lines.append(f"   ✅ Task {task_id} → Agent {best_agent.id} (similarity: {best_similarity:.3f})")
+                assignment_lines.append("\n")
             else:
                 # If no agents available, assign to best match regardless
                 best_match = similarities[0]  # Already sorted by similarity
@@ -248,9 +258,12 @@ class NegotiationEnvironment:
                     'similarity': best_match['similarity']
                 })
                 yield f"   ⚠️  Task {task_id} → Agent {best_match['agent_id']} (similarity: {best_match['similarity']:.3f}) - agent reused"
+
+        yield "\n".join(assignment_lines)
         
         # Create task assignments
         yield "\n📋 Creating task assignments..."
+        assignment_detail_lines = []
         for assignment_info in optimal_assignments:
             task_id = assignment_info['task_id']
             agent_id = assignment_info['assigned_to']
@@ -266,15 +279,14 @@ class NegotiationEnvironment:
                 # Show assignment details
                 task_content = task.task
                 similarity = assignment_info.get('similarity', 'N/A')
-                yield f"📋 Task {task_id} → {agent_id}"
-                yield f"   Content: {task_content}"
-                yield f"   Similarity: {similarity:.3f}"
-                yield f"   ✅ Assignment created successfully"
+                assignment_detail_lines.append(f"📋 Task {task_id} → {agent_id}")
+                assignment_detail_lines.append(f"   Content: {task_content}")
+                assignment_detail_lines.append(f"   Similarity: {similarity:.3f}")
+                assignment_detail_lines.append("\n")
             else:
                 yield f"   ❌ Failed to create assignment for Task {task_id} → Agent {agent_id}"
         
-
-        yield f"✅ Initial distribution complete: {len(self.taskAssignments)} assignments created"
+        yield "\n".join(assignment_detail_lines)
 
     def _agent_card_to_text(self, agent_card):
         """Convert agent card dictionary to searchable text"""
@@ -307,14 +319,15 @@ class NegotiationEnvironment:
         
         task_evaluations = {}
         agent_capabilities = {}
-        
+        evaluation_lines = []
+
         # Each agent evaluates all tasks to understand capabilities
         for task_assignment in self.taskAssignments:
             agent = task_assignment.agent
             task = task_assignment.task
             
             # Agent evaluates its assigned task
-            evaluation = agent.evaluate(task.task)
+            evaluation = agent.evaluate(task.task, context=self.context_messages)
             task_evaluations[task.id] = {
                 'assigned_agent': agent.id,
                 'evaluation': evaluation,
@@ -331,8 +344,11 @@ class NegotiationEnvironment:
                 'requirements': evaluation.get('requirements', [])
             })
             
-            yield f"""🤖 Agent {agent.id} evaluated Task {task.id}: \n
-                  "Confidence: {evaluation.get('confidence', 'N/A')}"""
+            evaluation_lines.append(
+        f"""🤖 Agent {agent.id} evaluated Task {task.id}:\n   Confidence: {evaluation.get('confidence', 'N/A')}"""
+    )
+            evaluation_lines.append("\n")
+        yield "\n".join(evaluation_lines)
         
         # Phase 2: Cross-agent evaluation for optimization
         yield f"\n🔄 Phase 2: Cross-Agent Evaluation & Negotiation"
@@ -344,31 +360,27 @@ class NegotiationEnvironment:
             current_agent = task_info['assigned_agent']
             task_desc = task_info['task'].task
             current_confidence = task_info['evaluation'].get('confidence', 0.5)
-            
-            yield f"""\n📋 Evaluating Task {task_id}: '{task_desc}'\n
-           Current assignee: Agent {current_agent} (confidence: {current_confidence})"""
-            
+        
+            lines = [
+                f"\n📋 Evaluating Task {task_id}: '{task_desc}'"
+                f"   Current assignee: Agent {current_agent} (confidence: {current_confidence})"
+            ]
+        
             # Other agents evaluate this task
             better_alternatives = []
+            agent_eval_lines = []
             for other_assignment in self.taskAssignments:
                 other_agent = other_assignment.agent
                 if other_agent.id != current_agent:
-                    alt_evaluation = other_agent.evaluate(task_desc)
+                    alt_evaluation = other_agent.evaluate(task_desc, context=self.context_messages)
                     alt_confidence = alt_evaluation.get('confidence', 0.0)
-                    
-                    yield f"  🔍 Agent {other_agent.id} evaluation: confidence {alt_confidence}"
-                    
+                    agent_eval_lines.append(f"\n  🔍 Agent {other_agent.id} evaluation: confidence {alt_confidence}")        
                     # More flexible improvement criteria
                     improvement_threshold = 0.1  # Reduced from 0.2 to 0.1 (10% improvement)
-                    
-                    # Consider reassignment if:
-                    # 1. Another agent has significantly higher confidence
-                    # 2. Current agent has very low confidence (< 0.4) and another agent has medium+ confidence (> 0.6)
-                    # 3. Another agent has at least 15% higher confidence
-                    
+        
                     should_reassign = False
                     reason = ""
-                    
+        
                     if alt_confidence > current_confidence + improvement_threshold:
                         should_reassign = True
                         reason = f"Significant confidence improvement (+{alt_confidence - current_confidence:.2f})"
@@ -378,7 +390,7 @@ class NegotiationEnvironment:
                     elif alt_confidence > current_confidence * 1.15:  # 15% relative improvement
                         should_reassign = True
                         reason = f"Relative improvement of {((alt_confidence/current_confidence)-1)*100:.1f}%"
-                    
+        
                     if should_reassign:
                         better_alternatives.append({
                             'agent_id': other_agent.id,
@@ -388,17 +400,19 @@ class NegotiationEnvironment:
                             'relative_improvement': (alt_confidence / current_confidence) if current_confidence > 0 else float('inf'),
                             'reason': reason
                         })
-            
+        
+            lines.extend(agent_eval_lines)
+        
             if better_alternatives:
                 # Sort by multiple criteria: improvement, relative improvement, and confidence
                 better_alternatives.sort(key=lambda x: (
-                    x['improvement'],  # Absolute improvement
-                    x['relative_improvement'],  # Relative improvement
-                    x['confidence']  # Final confidence
+                    x['improvement'],
+                    x['relative_improvement'],
+                    x['confidence']
                 ), reverse=True)
-                
+        
                 best_alternative = better_alternatives[0]
-                
+        
                 optimization_suggestions.append({
                     'task_id': task_id,
                     'current_agent': current_agent,
@@ -409,37 +423,39 @@ class NegotiationEnvironment:
                     'current_confidence': current_confidence,
                     'suggested_confidence': best_alternative['confidence']
                 })
-                
-                yield f"""💡 Suggestion: Reassign to Agent {best_alternative['agent_id']}\n
-                 Confidence: {current_confidence:.2f} → {best_alternative['confidence']:.2f}\n
-        Improvement: +{best_alternative['improvement']:.2f} ({best_alternative['reason']})"""
-                
+        
+                lines.append(
+                    f"""💡 Suggestion: Reassign to Agent {best_alternative['agent_id']}
+           Confidence: {current_confidence:.2f} → {best_alternative['confidence']:.2f}
+           Improvement: +{best_alternative['improvement']:.2f} ({best_alternative['reason']})"""
+                )
+        
                 # Show other good alternatives too
                 if len(better_alternatives) > 1:
-                    yield f"      Other alternatives:"
+                    lines.append("      Other alternatives:")
                     for alt in better_alternatives[1:3]:  # Show top 3 alternatives
-                        yield f"        - Agent {alt['agent_id']}: {alt['confidence']:.2f} (+{alt['improvement']:.2f})"
+                        lines.append(f"        - Agent {alt['agent_id']}: {alt['confidence']:.2f} (+{alt['improvement']:.2f})")
             else:
                 # Even if no better alternatives, show all agent evaluations for transparency
-                yield f"✅ Current assignment appears optimal"
-                yield "All agent evaluations:"
+                lines.append("✅ Current assignment appears optimal")
+                lines.append("All agent evaluations:")
                 for other_assignment in self.taskAssignments:
                     other_agent = other_assignment.agent
                     if other_agent.id != current_agent:
-                        alt_evaluation = other_agent.evaluate(task_desc)
+                        alt_evaluation = other_agent.evaluate(task_desc, context=self.context_messages)
                         alt_confidence = alt_evaluation.get('confidence', 0.0)
                         diff = alt_confidence - current_confidence
                         status = "✅ Better" if diff > 0 else "❌ Worse" if diff < 0 else "🟡 Equal"
-                        yield f"  - Agent {other_agent.id}: {alt_confidence:.2f} ({diff:+.2f}) {status}"
-                
+                        lines.append(f"  - Agent {other_agent.id}: {alt_confidence:.2f} ({diff:+.2f}) {status}")
+        
                 # Still suggest alternatives if they're close (within 5%)
                 close_alternatives = []
                 for other_assignment in self.taskAssignments:
                     other_agent = other_assignment.agent
                     if other_agent.id != current_agent:
-                        alt_evaluation = other_agent.evaluate(task_desc)
+                        alt_evaluation = other_agent.evaluate(task_desc, context=self.context_messages)
                         alt_confidence = alt_evaluation.get('confidence', 0.0)
-                        
+        
                         # If alternative is within 5% of current, suggest it as an option
                         if abs(alt_confidence - current_confidence) <= 0.05 and alt_confidence > 0.6:
                             close_alternatives.append({
@@ -447,13 +463,16 @@ class NegotiationEnvironment:
                                 'confidence': alt_confidence,
                                 'difference': alt_confidence - current_confidence
                             })
-                
-                if close_alternatives:
-                    yield f"      💡 Close alternatives (within 5%):"
-                    for alt in close_alternatives:
-                        yield f""" - Agent {alt['agent_id']}: {alt['confidence']:.2f} ({alt['difference']:+.2f})\n
-                         Consider this agent as an alternative option"""
         
+                if close_alternatives:
+                    lines.append("      💡 Close alternatives (within 5%):")
+                    for alt in close_alternatives:
+                        lines.append(
+                            f" - Agent {alt['agent_id']}: {alt['confidence']:.2f} ({alt['difference']:+.2f})\n   Consider this agent as an alternative option"
+                        )
+        
+            yield "\n".join(lines)
+
         # Phase 3: Negotiation and consensus
         yield f"\n🤝 Phase 3: Agent Negotiation & Consensus"
 
@@ -482,11 +501,13 @@ class NegotiationEnvironment:
                 # More sophisticated negotiation logic
                 if current_agent and suggested_agent:
                     # Current agent's response to giving up the task
-                    current_response = current_agent.evaluate(f"Release task {suggestion['task_id']} to another agent")
+                    current_response = current_agent.evaluate(f"Release task {suggestion['task_id']} to another agent", context=self.context_messages)
                     current_willingness = current_response.get('confidence', 0.5)
                     
                     # Suggested agent's response to taking on the task
-                    suggested_response = suggested_agent.evaluate(f"Take on additional task {suggestion['task_id']}")
+                    suggested_response = suggested_agent.evaluate(f"Take on additional task {suggestion['task_id']}", context=self.context_messages)
+
+
                     suggested_willingness = suggested_response.get('confidence', 0.7)
                     
                     yield f"""🤖 Agent {suggestion['current_agent']} willingness to release: {current_willingness:.2f}\n
@@ -551,11 +572,11 @@ class NegotiationEnvironment:
                 message_queue.append(f"📝 Task: {task_assignment.task.task}")
                 
                 # Pre-execution evaluation for final check
-                pre_eval = task_assignment.agent.evaluate(task_assignment.task.task)
+                pre_eval = task_assignment.agent.evaluate(task_assignment.task.task, context=self.context_messages)
                 message_queue.append(f"🔍 Pre-execution confidence: {pre_eval.get('confidence', 'N/A')}")
                 
                 time.sleep(0.5)  # simulate preparation delay
-                result = task_assignment.agent.run(task_assignment.task.task,message_queue)
+                result = task_assignment.agent.run(task_assignment.task.task, context=self.context_messages)
                 
                 message_queue.append(f"✅ Task {task_assignment.task.id} Result: {result['status']}")
                 if result['status'] == 'completed':

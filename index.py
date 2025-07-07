@@ -18,7 +18,7 @@ app = FastAPI()
 class State:
     output_messages: list[str]
     is_negotiating: bool = False
-    task:str
+    user_task:str
     input:str
     count = 0
 
